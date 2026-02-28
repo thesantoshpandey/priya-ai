@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getOrCreateUser, saveMessage, getRecentHistory, updateUserProfile, createOTPRecord, verifyOTP, hasPendingOTP } from "@/lib/supabase";
+import { getOrCreateUser, saveMessage, getRecentHistory, updateUserProfile, createOTPRecord, verifyOTP, hasPendingOTP, deleteUserData } from "@/lib/supabase";
 import { generateResponse, detectUserInfo } from "@/lib/gemini";
 import { parseTelegramUpdate, sendTelegramMessage, sendTypingAction } from "@/lib/telegram";
 import { sendOTP, generateOTP, detectPhoneNumber } from "@/lib/twilio";
@@ -160,6 +160,19 @@ async function handleCommand(chatId: string, command: string, firstName?: string
       await sendTelegramMessage(
         chatId,
         "Accha chal, fresh start karte hain! Bata kya padhna hai aaj? 🧬"
+      );
+      break;
+
+    case "/deletedata":
+      // DPDPA 2023 — Right to erasure
+      const user = await getOrCreateUser(chatId);
+      await deleteUserData(user.id);
+      await sendTelegramMessage(
+        chatId,
+        "Your data has been permanently deleted as per your request. " +
+        "All chat history, profile information, and consent records have been removed. " +
+        "If you message again, you'll start fresh as a new user.\n\n" +
+        "Tera saara data delete ho gaya hai. Agar dubara message karegi/karega toh naye user ki tarah start hoga."
       );
       break;
 

@@ -18,11 +18,12 @@ export async function sendOTP(parentPhone: string, otp: string): Promise<boolean
 
     await client.messages.create({
       body:
-        `[Priya AI] Aapke bachche ne NEET preparation ke liye Priya AI ka use kiya hai. ` +
-        `Unka verification code hai: ${otp}\n\n` +
-        `Ye code apne bachche ko share karein. ` +
-        `Priya AI ek AI-based NEET Biology tutor hai jo aapke bachche ki padhai mein madad karti hai.\n\n` +
-        `Agar aapne ye request nahi ki hai toh is message ko ignore karein.`,
+        `[Priya AI - NEET Tutor]\n\n` +
+        `Your child has requested access to Priya AI, an AI-powered NEET preparation tutor.\n\n` +
+        `Verification Code: ${otp}\n\n` +
+        `Please share this code with your child to complete verification. The code expires in 10 minutes.\n\n` +
+        `Priya AI helps students prepare for NEET with personalized Biology, Chemistry & Physics tutoring.\n\n` +
+        `If you did not expect this message, please ignore it.`,
       from: TWILIO_PHONE,
       to: formattedPhone,
     });

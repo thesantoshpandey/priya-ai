@@ -183,6 +183,31 @@ export async function logAdminAccess(action: string, targetUserId?: string) {
 }
 
 // ============================================
+// DATA DELETION (DPDPA 2023 Right to Erasure)
+// ============================================
+
+export async function deleteUserData(userId: string) {
+  // Delete all chats
+  await supabase.from("chats").delete().eq("user_id", userId);
+
+  // Mark consent records as withdrawn (retain for audit)
+  await supabase
+    .from("consent_log")
+    .update({ status: "withdrawn" })
+    .eq("user_id", userId);
+
+  // Log the deletion in admin log
+  await supabase.from("admin_access_log").insert({
+    admin_identifier: "user_self_delete",
+    action: "data_deletion_request",
+    target_user_id: userId,
+  });
+
+  // Delete user profile
+  await supabase.from("users").delete().eq("id", userId);
+}
+
+// ============================================
 // OTP / CONSENT OPERATIONS
 // ============================================
 
