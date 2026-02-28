@@ -101,6 +101,8 @@ export interface TelegramMessage {
   command?: string;
   hasPhoto: boolean;
   photoFileId?: string;
+  hasVoice: boolean;
+  voiceFileId?: string;
 }
 
 export function parseTelegramUpdate(body: any): TelegramMessage | null {
@@ -109,7 +111,6 @@ export function parseTelegramUpdate(body: any): TelegramMessage | null {
 
   // Handle photo messages
   if (message.photo && message.photo.length > 0) {
-    // Get highest resolution photo (last in array)
     const bestPhoto = message.photo[message.photo.length - 1];
     const caption = message.caption || "";
     return {
@@ -120,11 +121,13 @@ export function parseTelegramUpdate(body: any): TelegramMessage | null {
       isCommand: false,
       hasPhoto: true,
       photoFileId: bestPhoto.file_id,
+      hasVoice: false,
     };
   }
 
   // Handle voice messages
   if (message.voice || message.audio) {
+    const fileId = message.voice?.file_id || message.audio?.file_id;
     return {
       chatId: String(message.chat.id),
       text: "[voice_message]",
@@ -132,6 +135,8 @@ export function parseTelegramUpdate(body: any): TelegramMessage | null {
       firstName: message.from?.first_name,
       isCommand: false,
       hasPhoto: false,
+      hasVoice: true,
+      voiceFileId: fileId,
     };
   }
 
@@ -148,6 +153,7 @@ export function parseTelegramUpdate(body: any): TelegramMessage | null {
     isCommand,
     command: isCommand ? text.split(" ")[0].toLowerCase() : undefined,
     hasPhoto: false,
+    hasVoice: false,
   };
 }
 
@@ -194,4 +200,87 @@ export function escapeHtml(text: string): string {
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
+}
+
+// ============================================
+// SEND VOICE NOTE via Telegram
+// ============================================
+
+export async function sendVoiceNote(chatId: string, audioBuffer: Buffer) {
+  const formData = new FormData();
+  formData.append("chat_id", chatId);
+  formData.append("voice", new Blob([audioBuffer], { type: "audio/ogg" }), "voice.ogg");
+
+  const response = await fetch(`${TELEGRAM_API}/sendVoice`, {
+    method: "POST",
+    body: formData,
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    console.error("Telegram voice send error:", error);
+    // Fallback: try as audio file
+    const audioForm = new FormData();
+    audioForm.append("chat_id", chatId);
+    audioForm.append("audio", new Blob([audioBuffer], { type: "audio/mp3" }), "priya.mp3");
+    await fetch(`${TELEGRAM_API}/sendAudio`, {
+      method: "POST",
+      body: audioForm,
+    });
+  }
+}
+
+// ============================================
+// GENERATE VOICE via Cartesia
+// ============================================
+
+export async function generateVoice(text: string): Promise<Buffer | null> {
+  if (!process.env.CARTESIA_API_KEY) return null;
+
+  try {
+    // Truncate very long texts for voice (keep voice under 30 seconds)
+    const voiceText = text.length > 500 ? text.substring(0, 500) + "... baaki text mein padh lo!" : text;
+
+    const response = await fetch("https://api.cartesia.ai/tts/bytes", {
+      method: "POST",
+      headers: {
+        "X-API-Key": process.env.CARTESIA_API_KEY,
+        "Cartesia-Version": "2024-06-10",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model_id: "sonic-2",
+        transcript: voiceText,
+        voice: {
+          mode: "id",
+          id: process.env.CARTESIA_VOICE_ID || "a0e99841-438c-4a64-b679-ae501e7d6091",
+        },
+        output_format: {
+          container: "mp3",
+          bit_rate: 128000,
+          sample_rate: 44100,
+        },
+        language: "hi",
+      }),
+    });
+
+    if (response.ok) {
+      const buffer = await response.arrayBuffer();
+      return Buffer.from(buffer);
+    } else {
+      console.error("Cartesia error:", await response.text());
+      return null;
+    }
+  } catch (err) {
+    console.error("Cartesia TTS error:", err);
+    return null;
+  }
+}
+
+// ============================================
+// GET VOICE FILE from Telegram (for transcription)
+// ============================================
+
+export async function getVoiceFileUrl(fileId: string): Promise<string | null> {
+  return getFileUrl(fileId);
 }
