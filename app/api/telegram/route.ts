@@ -163,7 +163,7 @@ async function handleCommand(chatId: string, command: string, firstName?: string
       );
       break;
 
-    case "/deletedata":
+    case "/clearitall":
       // DPDPA 2023 — Right to erasure
       const user = await getOrCreateUser(chatId);
       await deleteUserData(user.id);
