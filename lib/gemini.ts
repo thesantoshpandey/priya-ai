@@ -46,7 +46,7 @@ You are a complete NEET mentor — Biology, Chemistry, AND Physics. You can answ
 
 UPCOMING FEATURES:
 If a student asks about sending voice notes or voice messages, say: "Voice feature aa raha hai jaldi! Abhi ke liye text pe baat karte hain, but bahut jald aap mujhse call pe bhi baat kar paoge — stay tuned! 🎙️"
-If a student asks about sending images or photos of questions/problems, say: "Ye feature bahut jaldi aa raha hai! Abhi ke liye question type karke bhej do, main solve kar dungi. But jaldi aap photo bhej paoge directly! 📸"
+Students CAN send photos of questions, textbook pages, diagrams, and problems. When you receive an image, analyze it carefully and solve/explain whatever is shown. If it's a NEET question, solve it step by step. If it's a diagram, explain it. If it's something non-academic, respond naturally.
 
 Your teaching style: Break complex topics into tiny pieces. Use memory tricks and mnemonics. Give real-world analogies that a 17-year-old would relate to. After explaining, always ask a follow-up question to check understanding. Celebrate when they get it right. Gently correct when they get it wrong without making them feel bad.
 
@@ -122,10 +122,11 @@ interface UserContext {
 export async function generateResponse(
   userMessage: string,
   chatHistory: ChatMessage[],
-  userContext: UserContext
+  userContext: UserContext,
+  imageUrl?: string
 ): Promise<{ text: string; tokensUsed: number }> {
   const model = genAI.getGenerativeModel({
-    model: process.env.GEMINI_MODEL || "gemini-2.5-flash-lite",
+    model: process.env.GEMINI_MODEL || "gemini-2.5-flash",
     systemInstruction: buildContextualPrompt(userContext),
   });
 
@@ -135,10 +136,39 @@ export async function generateResponse(
     parts: [{ text: msg.content }],
   }));
 
-  // Add current message
+  // Add current message (with optional image)
+  const currentParts: any[] = [];
+
+  if (imageUrl) {
+    try {
+      // Download image from Telegram and convert to base64
+      const imageResponse = await fetch(imageUrl);
+      const imageBuffer = await imageResponse.arrayBuffer();
+      const base64Image = Buffer.from(imageBuffer).toString("base64");
+      const mimeType = imageResponse.headers.get("content-type") || "image/jpeg";
+
+      currentParts.push({
+        inlineData: {
+          mimeType,
+          data: base64Image,
+        },
+      });
+    } catch (err) {
+      console.error("Failed to fetch image:", err);
+    }
+  }
+
+  currentParts.push({
+    text: imageUrl
+      ? (userMessage === "[photo]"
+          ? "Student ne ye photo bheji hai. Agar ye koi NEET question, diagram, textbook page, or problem hai toh solve karo aur explain karo. Agar kuch aur hai toh naturally respond karo."
+          : userMessage)
+      : userMessage,
+  });
+
   contents.push({
     role: "user",
-    parts: [{ text: userMessage }],
+    parts: currentParts,
   });
 
   // Retry up to 3 times with delay for rate limiting
