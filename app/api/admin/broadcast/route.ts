@@ -1,11 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase";
 
-const TELEGRAM_API = `https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}`;
-
-async function sendTelegramMessage(chatId: string, text: string) {
+async function sendBroadcastMessage(chatId: string, text: string) {
   try {
-    const res = await fetch(`${TELEGRAM_API}/sendMessage`, {
+    const res = await fetch(`https://api.telegram.org/bot${process.env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -73,7 +71,7 @@ export async function POST(request: NextRequest) {
   const results = [];
   for (const user of users) {
     if (user.telegram_chat_id) {
-      const result = await sendTelegramMessage(user.telegram_chat_id, message);
+      const result = await sendBroadcastMessage(user.telegram_chat_id, message);
       results.push(result);
       await new Promise((r) => setTimeout(r, 50));
     }
