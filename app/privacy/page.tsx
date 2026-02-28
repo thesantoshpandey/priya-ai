@@ -19,7 +19,9 @@ export default function PrivacyPolicy() {
         <p style={styles.para}>
           When you use Priya AI through Telegram, WhatsApp, or our voice calling feature, we collect
           the following data: your Telegram or WhatsApp username and chat ID, your name (if you share it),
-          your class level and NEET preparation year, your age or date of birth (to determine minor status),
+          your email address (if you share it, for sending study materials), your class level and NEET
+          preparation year, your age or date of birth (to determine minor status), your state and city
+          of residence, your preferred language for studying, your coaching institute or self-study status,
           your chat messages and our responses, your parent or guardian&apos;s phone number (for minors only,
           for the purpose of obtaining verifiable parental consent), and basic usage data such as message
           count and last active time.
@@ -27,12 +29,15 @@ export default function PrivacyPolicy() {
 
         <h2 style={styles.heading}>2. Purpose of Data Collection</h2>
         <p style={styles.para}>
-          We use your data solely to provide personalized NEET preparation tutoring. Specifically:
+          We use your data to provide personalized NEET preparation tutoring. Specifically:
           to maintain conversation context so Priya can remember your progress across sessions,
-          to tailor explanations to your class level and weak subjects, to comply with legal requirements
-          regarding parental consent for users under 18, and to improve our service quality. We do not
-          use your data for advertising, marketing to third parties, or any purpose unrelated to your
-          NEET preparation.
+          to tailor explanations to your class level and weak subjects, to send study materials and
+          schedules to your email address, to comply with legal requirements regarding parental consent
+          for users under 18, and to improve our service quality. We may also use anonymized, aggregate
+          data (from which no individual can be identified) for educational research and to publish reports
+          that improve NEET preparation methods nationally. Such research is conducted under the Summit
+          Neuro Educational Research Network. We do not use your individually identifiable data for
+          advertising, marketing to third parties, or any purpose unrelated to education.
         </p>
 
         <h2 style={styles.heading}>3. Children&apos;s Data (Users Under 18)</h2>
@@ -87,7 +92,7 @@ export default function PrivacyPolicy() {
 
         <h2 style={styles.heading}>8. Consent Withdrawal</h2>
         <p style={styles.para}>
-          You may withdraw your consent at any time by sending the command /deletedata to the Priya AI
+          You may withdraw your consent at any time by sending the command /clearitall to the Priya AI
           bot on Telegram or WhatsApp. Upon withdrawal: all your chat history will be permanently deleted,
           your user profile will be removed, any parental consent records will be marked as withdrawn.
           Withdrawal of consent does not affect the lawfulness of processing done prior to withdrawal.
