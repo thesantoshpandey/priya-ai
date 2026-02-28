@@ -45,7 +45,7 @@ YOUR CORE JOB:
 You are a complete NEET mentor — Biology, Chemistry, AND Physics. You can answer questions on ALL three subjects equally well. Biology is your personal favorite but you are strong in all NEET subjects. When a student asks about any NEET subject, you explain clearly using simple language, mnemonics, tricks, and relatable examples. You make difficult concepts feel easy. You also help with general study strategy, time management, exam technique, and revision planning.
 
 UPCOMING FEATURES:
-If a student asks about sending voice notes or voice messages, say: "Voice feature aa raha hai jaldi! Abhi ke liye text pe baat karte hain, but bahut jald aap mujhse call pe bhi baat kar paoge — stay tuned! 🎙️"
+Students CAN send voice notes! You will hear their voice message and respond naturally. When responding to a voice note, keep your response conversational and short — they're talking to you like a friend, so reply like one.
 Students CAN send photos of questions, textbook pages, diagrams, and problems. When you receive an image, analyze it carefully and solve/explain whatever is shown. If it's a NEET question, solve it step by step. If it's a diagram, explain it. If it's something non-academic, respond naturally.
 
 Your teaching style: Break complex topics into tiny pieces. Use memory tricks and mnemonics. Give real-world analogies that a 17-year-old would relate to. After explaining, always ask a follow-up question to check understanding. Celebrate when they get it right. Gently correct when they get it wrong without making them feel bad.
@@ -123,7 +123,8 @@ export async function generateResponse(
   userMessage: string,
   chatHistory: ChatMessage[],
   userContext: UserContext,
-  imageUrl?: string
+  imageUrl?: string,
+  audioBase64?: string
 ): Promise<{ text: string; tokensUsed: number }> {
   const model = genAI.getGenerativeModel({
     model: process.env.GEMINI_MODEL || "gemini-2.5-flash",
@@ -136,7 +137,7 @@ export async function generateResponse(
     parts: [{ text: msg.content }],
   }));
 
-  // Add current message (with optional image)
+  // Add current message (with optional image or audio)
   const currentParts: any[] = [];
 
   if (imageUrl) {
@@ -158,12 +159,23 @@ export async function generateResponse(
     }
   }
 
+  if (audioBase64) {
+    currentParts.push({
+      inlineData: {
+        mimeType: "audio/ogg",
+        data: audioBase64,
+      },
+    });
+  }
+
   currentParts.push({
     text: imageUrl
       ? (userMessage === "[photo]"
           ? "Student ne ye photo bheji hai. Agar ye koi NEET question, diagram, textbook page, or problem hai toh solve karo aur explain karo. Agar kuch aur hai toh naturally respond karo."
           : userMessage)
-      : userMessage,
+      : audioBase64
+        ? "Student ne ye voice message bheja hai. Pehle sun ke samjho kya bol rahe hain, phir naturally respond karo jaise Priya didi karti hain. Agar NEET se related doubt hai toh solve karo."
+        : userMessage,
   });
 
   contents.push({
@@ -294,16 +306,35 @@ export function detectUserInfo(message: string): Record<string, any> {
     }
   }
 
-  // Detect name (simple patterns)
+  // Detect name (improved — handles lowercase, Hinglish, direct replies)
   const namePatterns = [
-    /(?:my name is|mera naam|i am|i'm|main)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)/,
-    /(?:naam|name)\s+(?:hai|is)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)/,
+    /(?:my name is|mera naam|i am|i'm|main|mai)\s+([a-zA-Z]{2,}(?:\s+[a-zA-Z]{2,})?)/i,
+    /(?:naam|name)\s+(?:hai|h|is)\s+([a-zA-Z]{2,}(?:\s+[a-zA-Z]{2,})?)/i,
+    /(?:call me|mujhe bolo|bolo mujhe)\s+([a-zA-Z]{2,})/i,
+    /(?:^|\s)(?:i'm|im|mai|main)\s+([a-zA-Z]{2,})(?:\s|$|,|\.)/i,
   ];
+
+  // Common Indian names to catch direct name replies (when Priya asks "naam kya hai")
+  const commonNames = /^(rahul|rohit|arjun|vikram|aditya|aman|ankit|ashish|deepak|gaurav|harsh|karan|mohit|nikhil|prashant|raj|ravi|sachin|saurabh|varun|vishal|sneha|priya|ananya|shruti|pooja|neha|divya|sakshi|tanvi|khushi|aisha|simran|riya|meera|kavya|anjali|ishita|ritika|nisha|swati|drishti|mansi|kritika|sanya|aarav|aryan|dev|kunal|lakshya|manan|naman|piyush|shubham|yash|akshat|ayush|dhruv|ishan|jayesh|kartik|rohan|sahil|tushar|utkarsh|vivek)\b/i;
+
+  // Only match direct name if message is short (likely a name reply)
+  if (!updates.name && message.trim().split(/\s+/).length <= 3) {
+    const directMatch = message.trim().match(commonNames);
+    if (directMatch) {
+      updates.name = directMatch[1].charAt(0).toUpperCase() + directMatch[1].slice(1).toLowerCase();
+    }
+  }
+
   for (const pattern of namePatterns) {
     const match = message.match(pattern);
     if (match) {
-      updates.name = match[1].trim();
-      break;
+      // Filter out common false positives
+      const falsePositives = ["class", "dropper", "neet", "year", "old", "preparing", "biology", "physics", "chemistry", "student", "doctor", "fine", "good", "okay", "great", "happy", "sad", "confused", "stressed"];
+      const detected = match[1].trim().toLowerCase();
+      if (!falsePositives.includes(detected)) {
+        updates.name = match[1].trim().split(" ").map((w: string) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(" ");
+        break;
+      }
     }
   }
 
