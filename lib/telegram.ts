@@ -209,7 +209,7 @@ export function escapeHtml(text: string): string {
 export async function sendVoiceNote(chatId: string, audioBuffer: Buffer) {
   const formData = new FormData();
   formData.append("chat_id", chatId);
-  formData.append("voice", new Blob([audioBuffer], { type: "audio/ogg" }), "voice.ogg");
+  formData.append("voice", new Blob([new Uint8Array(audioBuffer)], { type: "audio/ogg" }), "voice.ogg");
 
   const response = await fetch(`${TELEGRAM_API}/sendVoice`, {
     method: "POST",
@@ -222,7 +222,7 @@ export async function sendVoiceNote(chatId: string, audioBuffer: Buffer) {
     // Fallback: try as audio file
     const audioForm = new FormData();
     audioForm.append("chat_id", chatId);
-    audioForm.append("audio", new Blob([audioBuffer], { type: "audio/mp3" }), "priya.mp3");
+    audioForm.append("audio", new Blob([new Uint8Array(audioBuffer)], { type: "audio/mp3" }), "priya.mp3");
     await fetch(`${TELEGRAM_API}/sendAudio`, {
       method: "POST",
       body: audioForm,
