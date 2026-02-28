@@ -57,6 +57,41 @@ export async function updateUserProfile(userId: string, updates: Record<string, 
   if (error) throw error;
 }
 
+export async function getOrCreateWhatsAppUser(phone: string, profileName?: string) {
+  const { data: existing } = await supabase
+    .from("users")
+    .select("*")
+    .eq("phone", phone)
+    .single();
+
+  if (existing) {
+    await supabase
+      .from("users")
+      .update({
+        message_count: existing.message_count + 1,
+        last_message_at: new Date().toISOString(),
+        ...(profileName && !existing.name ? { name: profileName } : {}),
+      })
+      .eq("id", existing.id);
+
+    return { ...existing, message_count: existing.message_count + 1 };
+  }
+
+  const { data: newUser, error } = await supabase
+    .from("users")
+    .insert({
+      phone,
+      name: profileName || null,
+      platform: "whatsapp",
+      message_count: 1,
+    })
+    .select()
+    .single();
+
+  if (error) throw error;
+  return newUser;
+}
+
 // ============================================
 // CHAT OPERATIONS
 // ============================================
@@ -65,13 +100,14 @@ export async function saveMessage(
   userId: string,
   role: "user" | "assistant",
   content: string,
-  metadata?: { tokens_used?: number; model_used?: string; response_time_ms?: number }
+  metadata?: { tokens_used?: number; model_used?: string; response_time_ms?: number },
+  platform?: string
 ) {
   const { error } = await supabase.from("chats").insert({
     user_id: userId,
     role,
     content,
-    platform: "telegram",
+    platform: platform || "telegram",
     ...metadata,
   });
 
@@ -144,6 +180,88 @@ export async function logAdminAccess(action: string, targetUserId?: string) {
     action,
     target_user_id: targetUserId || null,
   });
+}
+
+// ============================================
+// OTP / CONSENT OPERATIONS
+// ============================================
+
+export async function createOTPRecord(userId: string, parentPhone: string, otp: string) {
+  // Delete any existing pending OTPs for this user
+  await supabase
+    .from("consent_log")
+    .delete()
+    .eq("user_id", userId)
+    .eq("status", "pending");
+
+  const { error } = await supabase.from("consent_log").insert({
+    user_id: userId,
+    parent_phone: parentPhone,
+    otp_sent_at: new Date().toISOString(),
+    consent_text: `Parental consent for minor to use Priya AI NEET preparation service. OTP: ${otp}`,
+    status: "pending",
+  });
+
+  // Also store OTP hash in a simple way (store in consent_text for now)
+  if (error) throw error;
+}
+
+export async function verifyOTP(userId: string, otp: string): Promise<boolean> {
+  const { data } = await supabase
+    .from("consent_log")
+    .select("*")
+    .eq("user_id", userId)
+    .eq("status", "pending")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .single();
+
+  if (!data) return false;
+
+  // Check OTP matches (stored in consent_text)
+  if (!data.consent_text.includes(otp)) return false;
+
+  // Check if OTP is not expired (10 minutes)
+  const sentAt = new Date(data.otp_sent_at).getTime();
+  if (Date.now() - sentAt > 10 * 60 * 1000) return false;
+
+  // Mark as verified
+  await supabase
+    .from("consent_log")
+    .update({
+      otp_verified_at: new Date().toISOString(),
+      status: "verified",
+    })
+    .eq("id", data.id);
+
+  // Update user's parental consent status
+  await supabase
+    .from("users")
+    .update({
+      parental_consent: true,
+      parent_phone: data.parent_phone,
+      consent_given_at: new Date().toISOString(),
+    })
+    .eq("id", userId);
+
+  return true;
+}
+
+export async function hasPendingOTP(userId: string): Promise<boolean> {
+  const { data } = await supabase
+    .from("consent_log")
+    .select("otp_sent_at")
+    .eq("user_id", userId)
+    .eq("status", "pending")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .single();
+
+  if (!data) return false;
+
+  // Check if OTP was sent within last 10 minutes
+  const sentAt = new Date(data.otp_sent_at).getTime();
+  return Date.now() - sentAt < 10 * 60 * 1000;
 }
 
 // ============================================

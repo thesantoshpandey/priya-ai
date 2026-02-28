@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getOrCreateUser, saveMessage, getRecentHistory, updateUserProfile } from "@/lib/supabase";
+import { getOrCreateUser, saveMessage, getRecentHistory, updateUserProfile, createOTPRecord, verifyOTP, hasPendingOTP } from "@/lib/supabase";
 import { generateResponse, detectUserInfo } from "@/lib/gemini";
 import { parseTelegramUpdate, sendTelegramMessage, sendTypingAction } from "@/lib/telegram";
+import { sendOTP, generateOTP, detectPhoneNumber } from "@/lib/twilio";
 
-export const maxDuration = 30; // Vercel function timeout
+export const maxDuration = 30;
 
 // ============================================
 // TELEGRAM WEBHOOK HANDLER
@@ -11,7 +12,6 @@ export const maxDuration = 30; // Vercel function timeout
 
 export async function POST(request: NextRequest) {
   try {
-    // Verify webhook secret (security)
     const secretHeader = request.headers.get("x-telegram-bot-api-secret-token");
     if (secretHeader !== process.env.TELEGRAM_WEBHOOK_SECRET) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
@@ -20,38 +20,87 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const message = parseTelegramUpdate(body);
 
-    // Ignore non-text messages (stickers, images, etc.)
     if (!message) {
       return NextResponse.json({ ok: true });
     }
 
-    // Handle commands
     if (message.isCommand) {
       await handleCommand(message.chatId, message.command!, message.firstName);
       return NextResponse.json({ ok: true });
     }
 
-    // Show typing indicator immediately
     await sendTypingAction(message.chatId);
 
-    // Get or create user in database
     const user = await getOrCreateUser(message.chatId, message.username);
 
-    // Detect and update user info from message content
+    // Detect and update user info
     const detectedInfo = detectUserInfo(message.text);
     if (Object.keys(detectedInfo).length > 0) {
       await updateUserProfile(user.id, detectedInfo);
-      // Merge detected info into user context
       Object.assign(user, detectedInfo);
     }
 
-    // Save user's message to database
     await saveMessage(user.id, "user", message.text);
 
-    // Get chat history for context
+    // ============================================
+    // OTP FLOW — Check before AI response
+    // ============================================
+
+    // Check if user typed a 6-digit OTP code
+    const otpMatch = message.text.match(/^\s*(\d{6})\s*$/);
+    if (otpMatch && user.is_minor && !user.parental_consent) {
+      const pendingOTP = await hasPendingOTP(user.id);
+      if (pendingOTP) {
+        const verified = await verifyOTP(user.id, otpMatch[1]);
+        if (verified) {
+          const successMsg =
+            "Yayy! OTP verified ho gaya! 🎉 Ab tere parents ki permission mil gayi hai. " +
+            "Chal ab properly padhai shuru karte hain. Bata kaunsa topic karein aaj?";
+          await saveMessage(user.id, "assistant", successMsg);
+          await sendTelegramMessage(message.chatId, successMsg);
+          return NextResponse.json({ ok: true });
+        } else {
+          const failMsg =
+            "Ye OTP galat hai ya expire ho gaya 😅 Apne parents se dubara code mangwa. " +
+            "Agar 10 minute se zyada ho gaye toh bol, main nayi OTP bhej dungi!";
+          await saveMessage(user.id, "assistant", failMsg);
+          await sendTelegramMessage(message.chatId, failMsg);
+          return NextResponse.json({ ok: true });
+        }
+      }
+    }
+
+    // Check if minor is providing parent's phone number
+    if (user.is_minor && !user.parental_consent) {
+      const phoneNumber = detectPhoneNumber(message.text);
+      if (phoneNumber) {
+        const otp = generateOTP();
+        const sent = await sendOTP(phoneNumber, otp);
+
+        if (sent) {
+          await createOTPRecord(user.id, phoneNumber, otp);
+          const otpSentMsg =
+            "Done! Maine tere parents ko ek SMS bhej diya hai OTP ke saath 📱 " +
+            "Unse code le aur yahan type kar de. 10 minute mein expire ho jayega!";
+          await saveMessage(user.id, "assistant", otpSentMsg);
+          await sendTelegramMessage(message.chatId, otpSentMsg);
+        } else {
+          const failMsg =
+            "Arrey yaar, SMS nahi ja payi 😔 Number check karke dubara bhej. " +
+            "Indian mobile number hona chahiye — jaise 9876543210";
+          await saveMessage(user.id, "assistant", failMsg);
+          await sendTelegramMessage(message.chatId, failMsg);
+        }
+        return NextResponse.json({ ok: true });
+      }
+    }
+
+    // ============================================
+    // NORMAL AI RESPONSE
+    // ============================================
+
     const history = await getRecentHistory(user.id, 30);
 
-    // Generate AI response
     const startTime = Date.now();
     const { text: aiResponse, tokensUsed } = await generateResponse(
       message.text,
@@ -68,20 +117,17 @@ export async function POST(request: NextRequest) {
     );
     const responseTime = Date.now() - startTime;
 
-    // Save AI response to database
     await saveMessage(user.id, "assistant", aiResponse, {
       tokens_used: tokensUsed,
       model_used: process.env.GEMINI_MODEL || "gemini-2.5-flash-lite",
       response_time_ms: responseTime,
     });
 
-    // Send response to Telegram
     await sendTelegramMessage(message.chatId, aiResponse);
 
     return NextResponse.json({ ok: true });
   } catch (error) {
     console.error("Webhook error:", error);
-    // Don't crash — Telegram will retry if we return 500
     return NextResponse.json({ ok: true });
   }
 }
@@ -96,8 +142,6 @@ async function handleCommand(chatId: string, command: string, firstName?: string
       const welcomeMsg = firstName
         ? `Hey ${firstName}! 😊 Main Priya hoon — teri NEET prep mein help karungi. Pehle bata, tera naam kya hai aur tu kis class mein hai?`
         : `Hey! 😊 Main Priya hoon — teri NEET prep mein help karungi. Pehle bata, tera naam kya hai aur tu kis class mein hai?`;
-      
-      // Create user on /start
       await getOrCreateUser(chatId);
       await sendTelegramMessage(chatId, welcomeMsg);
       break;
@@ -106,9 +150,9 @@ async function handleCommand(chatId: string, command: string, firstName?: string
       await sendTelegramMessage(
         chatId,
         "Main teri NEET preparation mein help kar sakti hoon 📚\n\n" +
-        "Biology, Chemistry, Physics — kuch bhi puch! Concept explain karungi, " +
-        "mnemonics bataungi, aur practice questions bhi dungi.\n\n" +
-        "Bas message kar aur shuru ho ja! 💪"
+          "Biology, Chemistry, Physics — kuch bhi puch! Concept explain karungi, " +
+          "mnemonics bataungi, aur practice questions bhi dungi.\n\n" +
+          "Bas message kar aur shuru ho ja! 💪"
       );
       break;
 
@@ -126,10 +170,6 @@ async function handleCommand(chatId: string, command: string, firstName?: string
       );
   }
 }
-
-// ============================================
-// WEBHOOK VERIFICATION (GET)
-// ============================================
 
 export async function GET() {
   return NextResponse.json({
