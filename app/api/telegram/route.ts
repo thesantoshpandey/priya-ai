@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getOrCreateUser, saveMessage, getRecentHistory, updateUserProfile, createOTPRecord, verifyOTP, hasPendingOTP, deleteUserData } from "@/lib/supabase";
 import { generateResponse, detectUserInfo } from "@/lib/gemini";
-import { parseTelegramUpdate, sendTelegramMessage, sendTypingAction, getFileUrl } from "@/lib/telegram";
+import { parseTelegramUpdate, sendTelegramMessage, sendTypingAction, getFileUrl, sendVoiceNote, generateVoice } from "@/lib/telegram";
 import { sendOTP, generateOTP, detectPhoneNumber } from "@/lib/twilio";
 
 export const maxDuration = 30;
@@ -81,13 +81,65 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: true });
     }
 
-    // Handle voice messages
-    if (message.text === "[voice_message]") {
-      await sendTelegramMessage(
-        message.chatId,
-        "Voice notes ka feature bahut jaldi aa raha hai! 🎙️ Abhi ke liye text mein type kardo apna doubt, main solve kar dungi. Jaldi aap mujhse voice pe bhi baat kar paoge — stay tuned! 🔥"
-      );
-      return NextResponse.json({ ok: true });
+    // Handle voice messages — transcribe with Gemini, reply with voice
+    if (message.hasVoice && message.voiceFileId) {
+      const voiceUrl = await getFileUrl(message.voiceFileId);
+      if (voiceUrl) {
+        await sendTypingAction(message.chatId);
+        const user = await getOrCreateUser(message.chatId, message.username);
+
+        // Download voice file and send to Gemini as audio
+        try {
+          const audioResponse = await fetch(voiceUrl);
+          const audioBuffer = await audioResponse.arrayBuffer();
+          const base64Audio = Buffer.from(audioBuffer).toString("base64");
+
+          const history = await getRecentHistory(user.id, 20);
+          const { text: aiResponse, tokensUsed } = await generateResponse(
+            "[voice_message]",
+            history,
+            {
+              name: user.name,
+              class: user.class,
+              neet_year: user.neet_year,
+              is_minor: user.is_minor,
+              parental_consent: user.parental_consent,
+              message_count: user.message_count,
+              weak_subjects: user.weak_subjects,
+            },
+            undefined, // no image
+            base64Audio // audio
+          );
+
+          await saveMessage(user.id, "user", "[voice message]");
+          await saveMessage(user.id, "assistant", aiResponse, {
+            tokens_used: tokensUsed,
+            model_used: process.env.GEMINI_MODEL || "gemini-2.5-flash",
+          });
+
+          // Send text response
+          await sendTelegramMessage(message.chatId, aiResponse);
+
+          // Also send voice note if Cartesia is configured
+          const voiceBuffer = await generateVoice(aiResponse);
+          if (voiceBuffer) {
+            await sendVoiceNote(message.chatId, voiceBuffer);
+          }
+        } catch (err) {
+          console.error("Voice processing error:", err);
+          await sendTelegramMessage(
+            message.chatId,
+            "Voice note sun nahi payi 😅 Text mein type kardo, main help karungi!"
+          );
+        }
+        return NextResponse.json({ ok: true });
+      } else {
+        await sendTelegramMessage(
+          message.chatId,
+          "Voice note nahi khul payi 😅 Dubara bhejo ya text mein type kardo!"
+        );
+        return NextResponse.json({ ok: true });
+      }
     }
 
     // Handle photo messages — send to Gemini Vision
