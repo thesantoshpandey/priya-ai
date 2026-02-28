@@ -68,6 +68,27 @@ export async function setWebhook(url: string) {
 }
 
 // ============================================
+// GET FILE URL (for images)
+// ============================================
+
+export async function getFileUrl(fileId: string): Promise<string | null> {
+  try {
+    const res = await fetch(`${TELEGRAM_API}/getFile`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ file_id: fileId }),
+    });
+    const data = await res.json();
+    if (data.ok && data.result?.file_path) {
+      return `https://api.telegram.org/file/bot${process.env.TELEGRAM_BOT_TOKEN}/${data.result.file_path}`;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+// ============================================
 // PARSE INCOMING UPDATE
 // ============================================
 
@@ -78,11 +99,43 @@ export interface TelegramMessage {
   firstName?: string;
   isCommand: boolean;
   command?: string;
+  hasPhoto: boolean;
+  photoFileId?: string;
 }
 
 export function parseTelegramUpdate(body: any): TelegramMessage | null {
   const message = body?.message;
-  if (!message?.text) return null;
+  if (!message) return null;
+
+  // Handle photo messages
+  if (message.photo && message.photo.length > 0) {
+    // Get highest resolution photo (last in array)
+    const bestPhoto = message.photo[message.photo.length - 1];
+    const caption = message.caption || "";
+    return {
+      chatId: String(message.chat.id),
+      text: caption || "[photo]",
+      username: message.from?.username,
+      firstName: message.from?.first_name,
+      isCommand: false,
+      hasPhoto: true,
+      photoFileId: bestPhoto.file_id,
+    };
+  }
+
+  // Handle voice messages
+  if (message.voice || message.audio) {
+    return {
+      chatId: String(message.chat.id),
+      text: "[voice_message]",
+      username: message.from?.username,
+      firstName: message.from?.first_name,
+      isCommand: false,
+      hasPhoto: false,
+    };
+  }
+
+  if (!message.text) return null;
 
   const text = message.text.trim();
   const isCommand = text.startsWith("/");
@@ -94,6 +147,7 @@ export function parseTelegramUpdate(body: any): TelegramMessage | null {
     firstName: message.from?.first_name,
     isCommand,
     command: isCommand ? text.split(" ")[0].toLowerCase() : undefined,
+    hasPhoto: false,
   };
 }
 
