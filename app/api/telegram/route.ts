@@ -12,7 +12,7 @@ export const maxDuration = 30;
 
 const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
 const RATE_LIMIT_PER_MINUTE = 10;
-const RATE_LIMIT_PER_DAY = 200;
+const RATE_LIMIT_PER_DAY = 500;
 const dailyLimitMap = new Map<string, { count: number; resetAt: number }>();
 
 function checkRateLimit(chatId: string): { allowed: boolean; reason?: string } {
@@ -90,22 +90,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: true });
     }
 
-    // Handle photo messages
+    // Handle photo messages — send to Gemini Vision
+    let imageUrl: string | undefined;
     if (message.hasPhoto && message.photoFileId) {
-      const fileUrl = await getFileUrl(message.photoFileId);
-
-      if (fileUrl) {
-        const photoMsg = message.text !== "[photo]"
-          ? "Photo mila aur caption bhi padha! 📸 Ye feature abhi development mein hai — jaldi main photos se directly questions solve kar paungi. Abhi ke liye apne caption mein jo likha hai uska jawab deti hoon!"
-          : "Photo mil gayi! 📸 Ye feature abhi development mein hai bachhe — bahut jaldi main photo dekh ke seedha solve kar dungi. Abhi ke liye please question type karke bhej do, main turant help karungi! ✍️";
-
-        await sendTelegramMessage(message.chatId, photoMsg);
-
-        if (message.text !== "[photo]") {
-          // Fall through to process caption as normal message
-        } else {
-          return NextResponse.json({ ok: true });
-        }
+      const url = await getFileUrl(message.photoFileId);
+      if (url) {
+        imageUrl = url;
+        // Fall through to normal AI processing with image
       } else {
         await sendTelegramMessage(
           message.chatId,
@@ -192,7 +183,8 @@ export async function POST(request: NextRequest) {
         parental_consent: user.parental_consent,
         message_count: user.message_count,
         weak_subjects: user.weak_subjects,
-      }
+      },
+      imageUrl
     );
     const responseTime = Date.now() - startTime;
 
