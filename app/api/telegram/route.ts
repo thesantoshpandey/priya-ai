@@ -8,6 +8,7 @@ import {
   verifyOTP,
   hasPendingOTP,
   deleteUserData,
+  supabase,
 } from "@/lib/supabase";
 import { generateResponse, detectUserInfo } from "@/lib/gemini";
 import {
@@ -78,10 +79,15 @@ export async function POST(request: NextRequest) {
     }
 
     if (message.isCommand) {
+      // Extract referral code from /start ref_XXXXX
+      const refMatch = message.text.match(/^\/start\s+ref_(\d+)$/i);
+      const referralFromChatId = refMatch ? refMatch[1] : undefined;
+      
       await handleCommand(
         message.chatId,
         message.command!,
-        message.firstName
+        message.firstName,
+        referralFromChatId
       );
       return NextResponse.json({ ok: true });
     }
@@ -353,11 +359,39 @@ export async function POST(request: NextRequest) {
 async function handleCommand(
   chatId: string,
   command: string,
-  firstName?: string
+  firstName?: string,
+  referralFromChatId?: string
 ) {
   switch (command) {
     case "/start":
       const user = await getOrCreateUser(chatId);
+
+      // Track referral if this is a new user coming from a referral link
+      if (referralFromChatId && user.message_count <= 1) {
+        try {
+          // Save who referred this user
+          await updateUserProfile(user.id, { referred_by: referralFromChatId });
+          // Increment referrer's count
+          const { data: referrer } = await supabase
+            .from("users")
+            .select("id, referral_count")
+            .eq("telegram_chat_id", referralFromChatId)
+            .single();
+          if (referrer) {
+            await supabase
+              .from("users")
+              .update({ referral_count: (referrer.referral_count || 0) + 1 })
+              .eq("id", referrer.id);
+            // Notify the referrer
+            await sendTelegramMessage(
+              referralFromChatId,
+              "🎉 Ek naya student apke link se join hua! Keep sharing — jitne zyada friends, utne zyada rewards! 💪"
+            );
+          }
+        } catch (e) {
+          console.error("Referral tracking error:", e);
+        }
+      }
 
       // Check if already registered
       if (user.phone && user.email) {
@@ -371,6 +405,40 @@ async function handleCommand(
           : `Hey! 😊 Main Priya hoon — apki NEET mentor. Shuru karne ke liye apna phone number bhejo (jaise 9876543210). Quick registration hai! 📱`;
         await sendTelegramMessage(chatId, welcomeMsg);
       }
+      break;
+
+    case "/refer":
+      const referLink = `https://t.me/ProfPriyaPandeybot?start=ref_${chatId}`;
+      let referCount = 0;
+      try {
+        const referUser = await getOrCreateUser(chatId);
+        referCount = referUser.referral_count || 0;
+      } catch (e) { /* columns may not exist yet */ }
+      await sendTelegramMessage(
+        chatId,
+        `🔗 Apka referral link:\n${referLink}\n\n` +
+        `Apne friends ko bhejo — jab wo join karenge, aapko points milenge! 🎁\n\n` +
+        `Ab tak ${referCount} friend${referCount !== 1 ? 's' : ''} join kiya apke link se! ` +
+        (referCount >= 5 ? "🔥 Amazing!" : referCount >= 1 ? "💪 Keep going!" : "Chalo shuru karte hain!")
+      );
+      break;
+
+    case "/points":
+      let points = 0;
+      try {
+        const pointsUser = await getOrCreateUser(chatId);
+        points = pointsUser.referral_count || 0;
+      } catch (e) { /* columns may not exist yet */ }
+      let tier = "";
+      if (points >= 10) tier = "🏆 GOLD — Podcast shoutout + surprise gift!";
+      else if (points >= 5) tier = "🥈 SILVER — Special study material access!";
+      else if (points >= 1) tier = "🥉 BRONZE — Keep sharing for bigger rewards!";
+      else tier = "Share karo aur earn karo! /refer se link lo 📲";
+      
+      await sendTelegramMessage(
+        chatId,
+        `📊 Apke referral points: ${points}\n\n${tier}`
+      );
       break;
 
     case "/help":
