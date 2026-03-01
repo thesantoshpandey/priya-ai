@@ -25,7 +25,9 @@ export async function getOrCreateUser(telegramChatId: string, username?: string)
       .update({
         message_count: existing.message_count + 1,
         last_message_at: new Date().toISOString(),
-        ...(username && !existing.telegram_username ? { telegram_username: username } : {}),
+        ...(username && !existing.telegram_username
+          ? { telegram_username: username }
+          : {}),
       })
       .eq("id", existing.id);
 
@@ -100,7 +102,11 @@ export async function saveMessage(
   userId: string,
   role: "user" | "assistant",
   content: string,
-  metadata?: { tokens_used?: number; model_used?: string; response_time_ms?: number },
+  metadata?: {
+    tokens_used?: number;
+    model_used?: string;
+    response_time_ms?: number;
+  },
   platform?: string
 ) {
   const { error } = await supabase.from("chats").insert({
@@ -259,12 +265,13 @@ export async function verifyOTP(userId: string, otp: string): Promise<boolean> {
     })
     .eq("id", data.id);
 
-  // Update user's parental consent status
+  // Update user's parental consent status AND phone number
   await supabase
     .from("users")
     .update({
       parental_consent: true,
       parent_phone: data.parent_phone,
+      phone: data.parent_phone,  // <-- THE FIX: also set phone field
       consent_given_at: new Date().toISOString(),
     })
     .eq("id", userId);
@@ -301,7 +308,10 @@ export async function getStats() {
   const { count: activeToday } = await supabase
     .from("users")
     .select("*", { count: "exact", head: true })
-    .gte("last_message_at", new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString());
+    .gte(
+      "last_message_at",
+      new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()
+    );
 
   const { count: totalMessages } = await supabase
     .from("chats")
