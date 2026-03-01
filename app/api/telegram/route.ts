@@ -111,62 +111,33 @@ export async function POST(request: NextRequest) {
     // Phone + Email required before ANY chat access
     // ============================================
 
-    // STEP 1: Check if phone is verified
+    // STEP 1: Check if phone is registered
+    // NOTE: OTP temporarily disabled — collecting phone directly until Twilio upgrade completes
     if (!user.phone) {
       // Check if user is sending a phone number
       const phoneNumber = detectPhoneNumber(message.text);
       if (phoneNumber) {
-        const otp = generateOTP();
-        const sent = await sendOTP(phoneNumber, otp);
-        if (sent) {
-          await createOTPRecord(user.id, phoneNumber, otp);
+        // Save phone directly (no OTP for now)
+        await updateUserProfile(user.id, { phone: phoneNumber });
+        // Now check email
+        if (!user.email) {
           await sendTelegramMessage(
             message.chatId,
-            "OTP bhej diya hai aapke number pe 📱 Yahan type karo — 10 minute mein expire hoga!"
+            "Phone saved! ✅ Ab ek last step — apna email do, main study material aur schedule bhejungi 📧"
           );
         } else {
           await sendTelegramMessage(
             message.chatId,
-            "SMS nahi ja payi 😔 Indian mobile number hona chahiye — jaise 9876543210. Dubara try karo!"
+            "Registration complete! ✅🎉 Main Priya — apki NEET mentor. Batao bachhe, kya padhna hai aaj?"
           );
         }
         return NextResponse.json({ ok: true });
       }
 
-      // Check if user is sending an OTP code
-      const otpMatch = message.text.match(/^\s*(\d{6})\s*$/);
-      if (otpMatch) {
-        const pendingOTP = await hasPendingOTP(user.id);
-        if (pendingOTP) {
-          const verified = await verifyOTP(user.id, otpMatch[1]);
-          if (verified) {
-            // Phone verified! Now check email
-            if (!user.email) {
-              await sendTelegramMessage(
-                message.chatId,
-                "Phone verified! ✅ Ab ek last step — apna email do, main study material aur schedule bhejungi 📧"
-              );
-            } else {
-              await sendTelegramMessage(
-                message.chatId,
-                "All done! ✅🎉 Ab baat karte hain — batao kya padhna hai aaj?"
-              );
-            }
-            return NextResponse.json({ ok: true });
-          } else {
-            await sendTelegramMessage(
-              message.chatId,
-              "OTP galat hai ya expire ho gaya 😅 Dubara apna phone number bhejo, nayi OTP bhejungi!"
-            );
-            return NextResponse.json({ ok: true });
-          }
-        }
-      }
-
-      // No phone, no phone number sent, no OTP — ask for phone
+      // No phone number sent — ask for phone
       await sendTelegramMessage(
         message.chatId,
-        "Hey! 😊 Main Priya hoon, apki NEET mentor. Shuru karne se pehle ek choti si registration — apna phone number bhejo (jaise 9876543210). Ek OTP aayega, verify karo aur done! 📱"
+        "Hey! 😊 Main Priya hoon, apki NEET mentor. Shuru karne se pehle ek choti si registration — apna phone number bhejo (jaise 9876543210) 📱"
       );
       return NextResponse.json({ ok: true });
     }
@@ -396,8 +367,8 @@ async function handleCommand(
         await sendTelegramMessage(chatId, welcomeMsg);
       } else {
         const welcomeMsg = firstName
-          ? `Hey ${firstName}! 😊 Main Priya hoon — apki NEET mentor. Shuru karne ke liye apna phone number bhejo (jaise 9876543210). Quick registration hai, OTP verify karo aur done! 📱`
-          : `Hey! 😊 Main Priya hoon — apki NEET mentor. Shuru karne ke liye apna phone number bhejo (jaise 9876543210). Quick registration hai, OTP verify karo aur done! 📱`;
+          ? `Hey ${firstName}! 😊 Main Priya hoon — apki NEET mentor. Shuru karne ke liye apna phone number bhejo (jaise 9876543210). Quick registration hai! 📱`
+          : `Hey! 😊 Main Priya hoon — apki NEET mentor. Shuru karne ke liye apna phone number bhejo (jaise 9876543210). Quick registration hai! 📱`;
         await sendTelegramMessage(chatId, welcomeMsg);
       }
       break;
