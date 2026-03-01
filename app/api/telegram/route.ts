@@ -1,7 +1,23 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getOrCreateUser, saveMessage, getRecentHistory, updateUserProfile, createOTPRecord, verifyOTP, hasPendingOTP, deleteUserData } from "@/lib/supabase";
+import {
+  getOrCreateUser,
+  saveMessage,
+  getRecentHistory,
+  updateUserProfile,
+  createOTPRecord,
+  verifyOTP,
+  hasPendingOTP,
+  deleteUserData,
+} from "@/lib/supabase";
 import { generateResponse, detectUserInfo } from "@/lib/gemini";
-import { parseTelegramUpdate, sendTelegramMessage, sendTypingAction, getFileUrl, sendVoiceNote, generateVoice } from "@/lib/telegram";
+import {
+  parseTelegramUpdate,
+  sendTelegramMessage,
+  sendTypingAction,
+  getFileUrl,
+  sendVoiceNote,
+  generateVoice,
+} from "@/lib/telegram";
 import { sendOTP, generateOTP, detectPhoneNumber } from "@/lib/twilio";
 
 export const maxDuration = 30;
@@ -17,8 +33,8 @@ const dailyLimitMap = new Map<string, { count: number; resetAt: number }>();
 
 function checkRateLimit(chatId: string): { allowed: boolean; reason?: string } {
   const now = Date.now();
-
   const minuteData = rateLimitMap.get(chatId);
+
   if (minuteData && now < minuteData.resetAt) {
     if (minuteData.count >= RATE_LIMIT_PER_MINUTE) {
       return { allowed: false, reason: "minute" };
@@ -47,7 +63,9 @@ function checkRateLimit(chatId: string): { allowed: boolean; reason?: string } {
 
 export async function POST(request: NextRequest) {
   try {
-    const secretHeader = request.headers.get("x-telegram-bot-api-secret-token");
+    const secretHeader = request.headers.get(
+      "x-telegram-bot-api-secret-token"
+    );
     if (secretHeader !== process.env.TELEGRAM_WEBHOOK_SECRET) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
@@ -60,7 +78,11 @@ export async function POST(request: NextRequest) {
     }
 
     if (message.isCommand) {
-      await handleCommand(message.chatId, message.command!, message.firstName);
+      await handleCommand(
+        message.chatId,
+        message.command!,
+        message.firstName
+      );
       return NextResponse.json({ ok: true });
     }
 
@@ -81,40 +103,140 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: true });
     }
 
+    // Get or create user
+    const user = await getOrCreateUser(message.chatId, message.username);
+
+    // ============================================
+    // MANDATORY REGISTRATION GATE
+    // Phone + Email required before ANY chat access
+    // ============================================
+
+    // STEP 1: Check if phone is verified
+    if (!user.phone) {
+      // Check if user is sending a phone number
+      const phoneNumber = detectPhoneNumber(message.text);
+      if (phoneNumber) {
+        const otp = generateOTP();
+        const sent = await sendOTP(phoneNumber, otp);
+        if (sent) {
+          await createOTPRecord(user.id, phoneNumber, otp);
+          await sendTelegramMessage(
+            message.chatId,
+            "OTP bhej diya hai aapke number pe 📱 Yahan type karo — 10 minute mein expire hoga!"
+          );
+        } else {
+          await sendTelegramMessage(
+            message.chatId,
+            "SMS nahi ja payi 😔 Indian mobile number hona chahiye — jaise 9876543210. Dubara try karo!"
+          );
+        }
+        return NextResponse.json({ ok: true });
+      }
+
+      // Check if user is sending an OTP code
+      const otpMatch = message.text.match(/^\s*(\d{6})\s*$/);
+      if (otpMatch) {
+        const pendingOTP = await hasPendingOTP(user.id);
+        if (pendingOTP) {
+          const verified = await verifyOTP(user.id, otpMatch[1]);
+          if (verified) {
+            // Phone verified! Now check email
+            if (!user.email) {
+              await sendTelegramMessage(
+                message.chatId,
+                "Phone verified! ✅ Ab ek last step — apna email do, main study material aur schedule bhejungi 📧"
+              );
+            } else {
+              await sendTelegramMessage(
+                message.chatId,
+                "All done! ✅🎉 Ab baat karte hain — batao kya padhna hai aaj?"
+              );
+            }
+            return NextResponse.json({ ok: true });
+          } else {
+            await sendTelegramMessage(
+              message.chatId,
+              "OTP galat hai ya expire ho gaya 😅 Dubara apna phone number bhejo, nayi OTP bhejungi!"
+            );
+            return NextResponse.json({ ok: true });
+          }
+        }
+      }
+
+      // No phone, no phone number sent, no OTP — ask for phone
+      await sendTelegramMessage(
+        message.chatId,
+        "Hey! 😊 Main Priya hoon, apki NEET mentor. Shuru karne se pehle ek choti si registration — apna phone number bhejo (jaise 9876543210). Ek OTP aayega, verify karo aur done! 📱"
+      );
+      return NextResponse.json({ ok: true });
+    }
+
+    // STEP 2: Phone verified, check email
+    if (!user.email) {
+      // Check if user is sending an email
+      const emailMatch = message.text.match(
+        /([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/
+      );
+      if (emailMatch) {
+        await updateUserProfile(user.id, {
+          email: emailMatch[1].toLowerCase(),
+        });
+        await sendTelegramMessage(
+          message.chatId,
+          "Perfect! Registration complete! ✅🎉 Main Priya — apki NEET mentor. Batao bachhe, kaunsi class mein ho aur kya padhna hai aaj?"
+        );
+        return NextResponse.json({ ok: true });
+      }
+
+      // No email sent — ask for it
+      await sendTelegramMessage(
+        message.chatId,
+        "Phone verified! ✅ Ab bas apna email do — study material aur schedule bhejungi 📧"
+      );
+      return NextResponse.json({ ok: true });
+    }
+
+    // ============================================
+    // REGISTRATION COMPLETE — NORMAL FLOW BELOW
+    // ============================================
+
     // Handle voice messages — transcribe with Gemini, reply with voice
     if (message.hasVoice && message.voiceFileId) {
       const voiceUrl = await getFileUrl(message.voiceFileId);
       if (voiceUrl) {
         await sendTypingAction(message.chatId);
-        const user = await getOrCreateUser(message.chatId, message.username);
 
         // Download voice file and send to Gemini as audio
         try {
           const audioResponse = await fetch(voiceUrl);
           const audioBuffer = await audioResponse.arrayBuffer();
-          const base64Audio = Buffer.from(audioBuffer).toString("base64");
+          const base64Audio =
+            Buffer.from(audioBuffer).toString("base64");
 
           const history = await getRecentHistory(user.id, 20);
-          const { text: aiResponse, tokensUsed } = await generateResponse(
-            "[voice_message]",
-            history,
-            {
-              name: user.name,
-              class: user.class,
-              neet_year: user.neet_year,
-              is_minor: user.is_minor,
-              parental_consent: user.parental_consent,
-              message_count: user.message_count,
-              weak_subjects: user.weak_subjects,
-            },
-            undefined, // no image
-            base64Audio // audio
-          );
+
+          const { text: aiResponse, tokensUsed } =
+            await generateResponse(
+              "[voice_message]",
+              history,
+              {
+                name: user.name,
+                class: user.class,
+                neet_year: user.neet_year,
+                is_minor: user.is_minor,
+                parental_consent: user.parental_consent,
+                message_count: user.message_count,
+                weak_subjects: user.weak_subjects,
+              },
+              undefined, // no image
+              base64Audio // audio
+            );
 
           await saveMessage(user.id, "user", "[voice message]");
           await saveMessage(user.id, "assistant", aiResponse, {
             tokens_used: tokensUsed,
-            model_used: process.env.GEMINI_MODEL || "gemini-2.5-flash",
+            model_used:
+              process.env.GEMINI_MODEL || "gemini-2.5-flash",
           });
 
           // Send text response
@@ -160,8 +282,6 @@ export async function POST(request: NextRequest) {
 
     await sendTypingAction(message.chatId);
 
-    const user = await getOrCreateUser(message.chatId, message.username);
-
     // Detect and update user info
     const detectedInfo = detectUserInfo(message.text);
     if (Object.keys(detectedInfo).length > 0) {
@@ -171,7 +291,7 @@ export async function POST(request: NextRequest) {
 
     await saveMessage(user.id, "user", message.text);
 
-    // OTP FLOW
+    // OTP FLOW for minor parental consent (separate from registration OTP)
     const otpMatch = message.text.match(/^\s*(\d{6})\s*$/);
     if (otpMatch && user.is_minor && !user.parental_consent) {
       const pendingOTP = await hasPendingOTP(user.id);
@@ -195,13 +315,12 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Check if minor providing parent phone
+    // Check if minor providing parent phone for consent
     if (user.is_minor && !user.parental_consent) {
       const phoneNumber = detectPhoneNumber(message.text);
       if (phoneNumber) {
         const otp = generateOTP();
         const sent = await sendOTP(phoneNumber, otp);
-
         if (sent) {
           await createOTPRecord(user.id, phoneNumber, otp);
           const otpSentMsg =
@@ -211,7 +330,7 @@ export async function POST(request: NextRequest) {
           await sendTelegramMessage(message.chatId, otpSentMsg);
         } else {
           const failMsg =
-            "Arrey yaar, SMS nahi ja payi 😔 Number check karke dubara bhejo. " +
+            'Arrey yaar, SMS nahi ja payi 😔 Number check karke dubara bhejo. ' +
             "Indian mobile number hona chahiye — jaise 9876543210";
           await saveMessage(user.id, "assistant", failMsg);
           await sendTelegramMessage(message.chatId, failMsg);
@@ -222,8 +341,8 @@ export async function POST(request: NextRequest) {
 
     // NORMAL AI RESPONSE
     const history = await getRecentHistory(user.id, 30);
-
     const startTime = Date.now();
+
     const { text: aiResponse, tokensUsed } = await generateResponse(
       message.text,
       history,
@@ -238,6 +357,7 @@ export async function POST(request: NextRequest) {
       },
       imageUrl
     );
+
     const responseTime = Date.now() - startTime;
 
     await saveMessage(user.id, "assistant", aiResponse, {
@@ -259,14 +379,27 @@ export async function POST(request: NextRequest) {
 // COMMAND HANDLERS
 // ============================================
 
-async function handleCommand(chatId: string, command: string, firstName?: string) {
+async function handleCommand(
+  chatId: string,
+  command: string,
+  firstName?: string
+) {
   switch (command) {
     case "/start":
-      const welcomeMsg = firstName
-        ? `Hey ${firstName}! 😊 Main Priya hoon — apki NEET prep mein help karungi. Pehle batao, apka naam kya hai aur aap kis class mein ho?`
-        : `Hey! 😊 Main Priya hoon — apki NEET prep mein help karungi. Pehle batao, apka naam kya hai aur aap kis class mein ho?`;
-      await getOrCreateUser(chatId);
-      await sendTelegramMessage(chatId, welcomeMsg);
+      const user = await getOrCreateUser(chatId);
+
+      // Check if already registered
+      if (user.phone && user.email) {
+        const welcomeMsg = firstName
+          ? `Hey ${firstName}! 😊 Wapas aa gaye! Batao kya padhna hai aaj?`
+          : `Hey! 😊 Wapas aa gaye! Batao kya padhna hai aaj?`;
+        await sendTelegramMessage(chatId, welcomeMsg);
+      } else {
+        const welcomeMsg = firstName
+          ? `Hey ${firstName}! 😊 Main Priya hoon — apki NEET mentor. Shuru karne ke liye apna phone number bhejo (jaise 9876543210). Quick registration hai, OTP verify karo aur done! 📱`
+          : `Hey! 😊 Main Priya hoon — apki NEET mentor. Shuru karne ke liye apna phone number bhejo (jaise 9876543210). Quick registration hai, OTP verify karo aur done! 📱`;
+        await sendTelegramMessage(chatId, welcomeMsg);
+      }
       break;
 
     case "/help":
@@ -287,14 +420,14 @@ async function handleCommand(chatId: string, command: string, firstName?: string
       break;
 
     case "/clearitall":
-      const user = await getOrCreateUser(chatId);
-      await deleteUserData(user.id);
+      const userToClear = await getOrCreateUser(chatId);
+      await deleteUserData(userToClear.id);
       await sendTelegramMessage(
         chatId,
         "Your data has been permanently deleted as per your request. " +
-        "All chat history, profile information, and consent records have been removed. " +
-        "If you message again, you'll start fresh as a new user.\n\n" +
-        "Apka saara data delete ho gaya hai. Agar dubara message karoge toh naye user ki tarah start hoga."
+          "All chat history, profile information, and consent records have been removed. " +
+          "If you message again, you'll start fresh as a new user.\n\n" +
+          "Apka saara data delete ho gaya hai. Agar dubara message karoge toh naye user ki tarah start hoga."
       );
       break;
 
