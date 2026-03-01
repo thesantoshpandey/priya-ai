@@ -113,68 +113,53 @@ export async function POST(request: NextRequest) {
     const user = await getOrCreateUser(message.chatId, message.username);
 
     // ============================================
-    // MANDATORY REGISTRATION GATE
-    // Phone + Email required before ANY chat access
+    // SOFT DATA COLLECTION (chat-first, collect later)
+    // Let students chat immediately, ask for details naturally after engagement
     // ============================================
 
-    // STEP 1: Check if phone is registered
-    // NOTE: OTP temporarily disabled — collecting phone directly until Twilio upgrade completes
-    if (!user.phone) {
-      // Check if user is sending a phone number
-      const phoneNumber = detectPhoneNumber(message.text);
-      if (phoneNumber) {
-        // Save phone directly (no OTP for now)
-        await updateUserProfile(user.id, { phone: phoneNumber });
-        // Now check email
-        if (!user.email) {
-          await sendTelegramMessage(
-            message.chatId,
-            "Phone saved! ✅ Ab ek last step — apna email do, main study material aur schedule bhejungi 📧"
-          );
-        } else {
-          await sendTelegramMessage(
-            message.chatId,
-            "Registration complete! ✅🎉 Main Priya — apki NEET mentor. Batao bachhe, kya padhna hai aaj?"
-          );
-        }
-        return NextResponse.json({ ok: true });
-      }
-
-      // No phone number sent — ask for phone
-      await sendTelegramMessage(
-        message.chatId,
-        "Hey! 😊 Main Priya hoon, apki NEET mentor. Shuru karne se pehle ek choti si registration — apna phone number bhejo (jaise 9876543210) 📱"
-      );
-      return NextResponse.json({ ok: true });
-    }
-
-    // STEP 2: Phone verified, check email
-    if (!user.email) {
-      // Check if user is sending an email
-      const emailMatch = message.text.match(
-        /([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/
-      );
-      if (emailMatch) {
-        await updateUserProfile(user.id, {
-          email: emailMatch[1].toLowerCase(),
-        });
+    // Always try to capture phone/email if user voluntarily sends one
+    const phoneNumber = detectPhoneNumber(message.text);
+    if (phoneNumber && !user.phone) {
+      await updateUserProfile(user.id, { phone: phoneNumber });
+      user.phone = phoneNumber;
+      if (!user.email) {
         await sendTelegramMessage(
           message.chatId,
-          "Perfect! Registration complete! ✅🎉 Main Priya — apki NEET mentor. Batao bachhe, kaunsi class mein ho aur kya padhna hai aaj?"
+          "Thanks yaar! ✅ Ek aur cheez — email bhi de do, study material bhejungi direct inbox mein 📧"
+        );
+        return NextResponse.json({ ok: true });
+      } else {
+        await sendTelegramMessage(
+          message.chatId,
+          "Saved! ✅ Ab bolo kya padhna hai aaj? 💪"
         );
         return NextResponse.json({ ok: true });
       }
+    }
 
-      // No email sent — ask for it
-      await sendTelegramMessage(
-        message.chatId,
-        "Phone verified! ✅ Ab bas apna email do — study material aur schedule bhejungi 📧"
-      );
-      return NextResponse.json({ ok: true });
+    const emailMatch = message.text.match(
+      /([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/
+    );
+    if (emailMatch && !user.email) {
+      await updateUserProfile(user.id, { email: emailMatch[1].toLowerCase() });
+      user.email = emailMatch[1].toLowerCase();
+      if (!user.phone) {
+        await sendTelegramMessage(
+          message.chatId,
+          "Email saved! ✅ Phone number bhi de do — reminders bhejungi exam se pehle 📱"
+        );
+        return NextResponse.json({ ok: true });
+      } else {
+        await sendTelegramMessage(
+          message.chatId,
+          "Perfect! ✅ All set. Ab padhai pe dhyaan! 🔥"
+        );
+        return NextResponse.json({ ok: true });
+      }
     }
 
     // ============================================
-    // REGISTRATION COMPLETE — NORMAL FLOW BELOW
+    // NORMAL FLOW — EVERYONE GETS TO CHAT
     // ============================================
 
     // Handle voice messages — transcribe with Gemini, reply with voice
@@ -344,6 +329,35 @@ export async function POST(request: NextRequest) {
     });
 
     await sendTelegramMessage(message.chatId, aiResponse);
+
+    // ============================================
+    // SOFT NUDGE: Ask for phone/email after engagement
+    // Nudge at message 5, 20, 40 — not every message
+    // ============================================
+    const msgCount = (user.message_count || 0) + 1;
+    if (!user.phone && (msgCount === 5 || msgCount === 20 || msgCount === 40)) {
+      setTimeout(async () => {
+        try {
+          await sendTelegramMessage(
+            message.chatId,
+            msgCount === 5
+              ? "Btw yaar 😊 apna phone number de do — exam dates aur important updates bhejungi direct! Jaise 9876543210 📱"
+              : msgCount === 20
+              ? "Arey sun, abhi tak phone number nahi diya! 😤 De do na — study reminders bhejungi, bohot kaam ayega 📲"
+              : "Last time bol rahi hoon — number do! 😂 Tumhare jaise serious student ko reminders milne chahiye 📱"
+          );
+        } catch (e) { /* ignore */ }
+      }, 2000);
+    } else if (user.phone && !user.email && (msgCount === 8 || msgCount === 25)) {
+      setTimeout(async () => {
+        try {
+          await sendTelegramMessage(
+            message.chatId,
+            "Ek aur baat — email bhi de do! Study notes aur PDF direct inbox mein bhejungi 📧"
+          );
+        } catch (e) { /* ignore */ }
+      }, 2000);
+    }
 
     return NextResponse.json({ ok: true });
   } catch (error) {
