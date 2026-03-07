@@ -6,17 +6,24 @@ export const maxDuration = 30;
 
 // ============================================
 // VOICE API — Text in, AI text + Cartesia audio out
+// SECURED: Requires valid API secret header
 // ============================================
 
 export async function POST(request: NextRequest) {
   try {
+    // AUTH CHECK — reject unauthenticated requests
+    const authHeader = request.headers.get("x-api-secret");
+    if (authHeader !== process.env.ADMIN_PASSWORD) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     const { userId, text } = await request.json();
 
     if (!userId || !text) {
       return NextResponse.json({ error: "Missing userId or text" }, { status: 400 });
     }
 
-    // Get user
+    // Rate limit check via Supabase
     const { data: user } = await supabase
       .from("users")
       .select("*")
@@ -26,6 +33,25 @@ export async function POST(request: NextRequest) {
     if (!user) {
       return NextResponse.json({ error: "User not found" }, { status: 404 });
     }
+
+    // Check daily voice limit (reuse existing daily_voice_count)
+    const now = new Date();
+    const resetAt = user.daily_reset_at ? new Date(user.daily_reset_at) : new Date(0);
+    let voiceCount = user.daily_voice_count || 0;
+
+    if (now > resetAt) {
+      voiceCount = 0; // Reset if past reset time
+    }
+
+    if (voiceCount >= 10) {
+      return NextResponse.json({ error: "Daily voice limit reached" }, { status: 429 });
+    }
+
+    // Increment voice count
+    await supabase.from("users").update({
+      daily_voice_count: voiceCount + 1,
+      ...(now > resetAt ? { daily_reset_at: new Date(now.getTime() + 86400000).toISOString() } : {}),
+    }).eq("id", userId);
 
     // Save user message
     await saveMessage(userId, "user", text, undefined, "voice");
@@ -71,14 +97,14 @@ export async function POST(request: NextRequest) {
             transcript: aiResponse,
             voice: {
               mode: "id",
-              id: process.env.CARTESIA_VOICE_ID || "bef6b65a-abe0-4298-957f-3e41954dfb1c", // Priya PP voice clone
+              id: process.env.CARTESIA_VOICE_ID || "bef6b65a-abe0-4298-957f-3e41954dfb1c",
             },
             output_format: {
               container: "mp3",
               bit_rate: 128000,
               sample_rate: 44100,
             },
-            language: user.preferred_language === "english" ? "en" : "hi", // Auto from user preference
+            language: user.preferred_language === "english" ? "en" : "hi",
           }),
         });
 
@@ -95,7 +121,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       text: aiResponse,
-      audio: audioBase64, // Base64 MP3 or null if Cartesia unavailable
+      audio: audioBase64,
       tokensUsed,
     });
   } catch (error) {
