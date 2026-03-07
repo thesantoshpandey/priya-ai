@@ -47,6 +47,20 @@ export async function GET(request: NextRequest) {
       .limit(200),
   ]);
 
+  // Generate signed URLs for voice message audio playback
+  const voiceWithUrls = await Promise.all(
+    (voiceMessages || []).map(async (v: any) => {
+      let audioUrl: string | null = null;
+      if (v.storage_path) {
+        const { data } = await supabase.storage
+          .from("voice-messages")
+          .createSignedUrl(v.storage_path, 3600); // 1 hour expiry
+        audioUrl = data?.signedUrl || null;
+      }
+      return { ...v, audioUrl };
+    })
+  );
+
   await logAdminAccess("view_dashboard");
 
   return NextResponse.json({
@@ -62,7 +76,7 @@ export async function GET(request: NextRequest) {
       chats24h: chats24h || 0,
     },
     langStats: langStats || [],
-    voiceMessages: voiceMessages || [],
+    voiceMessages: voiceWithUrls,
     users: topUsers || [],
   });
 }
