@@ -423,3 +423,68 @@ export async function getVoiceAudioUrl(storagePath: string) {
 
   return data?.signedUrl || null;
 }
+
+// ============================================
+// IMAGE MESSAGE STORAGE
+// ============================================
+
+export async function saveImageMessage(
+  userId: string,
+  telegramFileId: string,
+  imageBuffer: Buffer,
+  metadata: {
+    chatId?: string;
+    fileSize?: number;
+    mimeType?: string;
+    caption?: string;
+    aiResponse?: string;
+    contentType?: string;
+    subject?: string;
+    topic?: string;
+    contentFlag?: string;
+    flaggedReason?: string;
+  }
+) {
+  const timestamp = Date.now();
+  const ext = (metadata.mimeType || "image/jpeg").split("/")[1] || "jpg";
+  const storagePath = `${userId}/${timestamp}.${ext}`;
+
+  // 1. Upload image to storage bucket
+  const { error: uploadError } = await supabase.storage
+    .from("image-messages")
+    .upload(storagePath, imageBuffer, {
+      contentType: metadata.mimeType || "image/jpeg",
+      upsert: false,
+    });
+
+  if (uploadError) {
+    console.error("Image upload error:", uploadError);
+  }
+
+  // 2. Save metadata
+  const { data, error } = await supabase
+    .from("image_messages")
+    .insert({
+      user_id: userId,
+      chat_id: metadata.chatId || null,
+      telegram_file_id: telegramFileId,
+      storage_path: uploadError ? null : storagePath,
+      file_size_bytes: metadata.fileSize || null,
+      mime_type: metadata.mimeType || "image/jpeg",
+      caption: metadata.caption || null,
+      ai_response: metadata.aiResponse || null,
+      content_type: metadata.contentType || "unknown",
+      subject: metadata.subject || null,
+      topic: metadata.topic || null,
+      content_flag: metadata.contentFlag || "clean",
+      flagged_reason: metadata.flaggedReason || null,
+    })
+    .select("id")
+    .single();
+
+  if (error) {
+    console.error("Image metadata save error:", error);
+  }
+
+  return data?.id || null;
+}
