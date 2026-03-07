@@ -9,6 +9,7 @@ import {
   hasPendingOTP,
   deleteUserData,
   saveVoiceMessage,
+  saveImageMessage,
   supabase,
 } from "@/lib/supabase";
 import { generateResponse, detectUserInfo } from "@/lib/gemini";
@@ -62,6 +63,58 @@ function checkRateLimit(chatId: string): { allowed: boolean; reason?: string } {
 // ============================================
 // TELEGRAM WEBHOOK HANDLER
 // ============================================
+
+// ============================================
+// AUTO LANGUAGE DETECTION (Unicode script ranges)
+// ============================================
+function detectLanguageFromScript(text: string): string | null {
+  // Count characters in each script
+  const scripts: Record<string, number> = {};
+  for (const char of text) {
+    const code = char.codePointAt(0)!;
+    if (code >= 0x0B80 && code <= 0x0BFF) scripts["tamil"] = (scripts["tamil"] || 0) + 1;
+    else if (code >= 0x0C80 && code <= 0x0CFF) scripts["kannada"] = (scripts["kannada"] || 0) + 1;
+    else if (code >= 0x0C00 && code <= 0x0C7F) scripts["telugu"] = (scripts["telugu"] || 0) + 1;
+    else if (code >= 0x0D00 && code <= 0x0D7F) scripts["malayalam"] = (scripts["malayalam"] || 0) + 1;
+    else if (code >= 0x0980 && code <= 0x09FF) scripts["bengali"] = (scripts["bengali"] || 0) + 1;
+    else if (code >= 0x0900 && code <= 0x097F) scripts["devanagari"] = (scripts["devanagari"] || 0) + 1;
+    else if (code >= 0x0A80 && code <= 0x0AFF) scripts["gujarati"] = (scripts["gujarati"] || 0) + 1;
+    else if (code >= 0x0A00 && code <= 0x0A7F) scripts["gurmukhi"] = (scripts["gurmukhi"] || 0) + 1;
+    else if (code >= 0x0B00 && code <= 0x0B7F) scripts["odia"] = (scripts["odia"] || 0) + 1;
+    else if (code >= 0x0600 && code <= 0x06FF) scripts["urdu"] = (scripts["urdu"] || 0) + 1;
+  }
+
+  // Find dominant script (need at least 3 chars)
+  let maxScript = "";
+  let maxCount = 2;
+  for (const [script, count] of Object.entries(scripts)) {
+    if (count > maxCount) {
+      maxScript = script;
+      maxCount = count;
+    }
+  }
+
+  // Map scripts to languages
+  const scriptToLang: Record<string, string> = {
+    tamil: "tamil",
+    kannada: "kannada",
+    telugu: "telugu",
+    malayalam: "malayalam",
+    bengali: "bengali",
+    gujarati: "gujarati",
+    gurmukhi: "punjabi",
+    odia: "odia",
+    urdu: "urdu",
+    // devanagari could be Hindi, Marathi, Sanskrit — default to hindi
+    // but we keep hinglish as default so don't override for devanagari
+  };
+
+  if (maxScript && scriptToLang[maxScript]) {
+    return scriptToLang[maxScript];
+  }
+
+  return null;
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -189,6 +242,7 @@ export async function POST(request: NextRequest) {
                 parental_consent: user.parental_consent,
                 message_count: user.message_count,
                 weak_subjects: user.weak_subjects,
+                preferred_language: user.preferred_language,
               },
               undefined,
               base64Audio
@@ -275,6 +329,17 @@ export async function POST(request: NextRequest) {
       Object.assign(user, detectedInfo);
     }
 
+    // ============================================
+    // AUTO LANGUAGE DETECTION (script-based)
+    // ============================================
+    if (!user.preferred_language || user.preferred_language === "hinglish") {
+      const detected = detectLanguageFromScript(message.text);
+      if (detected && detected !== "hinglish") {
+        await updateUserProfile(user.id, { preferred_language: detected });
+        user.preferred_language = detected;
+      }
+    }
+
     await saveMessage(user.id, "user", message.text);
 
     // OTP FLOW for minor parental consent (separate from registration OTP)
@@ -340,6 +405,7 @@ export async function POST(request: NextRequest) {
         parental_consent: user.parental_consent,
         message_count: user.message_count,
         weak_subjects: user.weak_subjects,
+        preferred_language: user.preferred_language,
       },
       imageUrl
     );
@@ -353,6 +419,38 @@ export async function POST(request: NextRequest) {
     });
 
     await sendTelegramMessage(message.chatId, aiResponse);
+
+    // ============================================
+    // STORE IMAGE if this was a photo message
+    // ============================================
+    if (imageUrl && message.photoFileId) {
+      (async () => {
+        try {
+          const imgRes = await fetch(imageUrl);
+          const imgBuffer = Buffer.from(await imgRes.arrayBuffer());
+          const mimeType = imgRes.headers.get("content-type") || "image/jpeg";
+
+          let imgFlag = "clean";
+          let imgFlagReason: string | undefined = undefined;
+          const lowerResp = aiResponse.toLowerCase();
+          if (lowerResp.includes("bakwas") || lowerResp.includes("aise nahi")) {
+            imgFlag = "inappropriate";
+            imgFlagReason = "AI triggered content safety response";
+          }
+
+          await saveImageMessage(user.id, message.photoFileId!, imgBuffer, {
+            fileSize: imgBuffer.length,
+            mimeType,
+            caption: message.text !== "[photo]" ? message.text : undefined,
+            aiResponse,
+            contentFlag: imgFlag,
+            flaggedReason: imgFlagReason,
+          });
+        } catch (err) {
+          console.error("Image storage error:", err);
+        }
+      })();
+    }
 
     // ============================================
     // SOFT NUDGE: Ask for phone/email after engagement
@@ -445,8 +543,8 @@ async function handleCommand(
         await sendTelegramMessage(
           chatId,
           `Hey ${name}! 😊 Main Priya hoon — NEET Biology teacher, 2017 se padha rahi hoon.\n\n` +
-          `Seedha doubt pucho — Biology, Chemistry, Physics kuch bhi. Ya bolo kaunsa chapter chal raha hai, main wahi se shuru karungi 💪\n\n` +
-          `NEET 2026 mein kitne din bache hain pata hai? Chalo padhai shuru karte hain! 🔥`
+          `Seedha doubt pucho — Biology, Chemistry, Physics kuch bhi! Photo bhejo, voice bhejo, ya type karo 💪\n\n` +
+          `Hindi, Tamil, Kannada, Telugu, Bengali, Marathi, Malayalam — apni bhasha mein padho! 🇮🇳🔥`
         );
       }
       break;
