@@ -2,46 +2,71 @@ import { NextRequest, NextResponse } from "next/server";
 import { getOrCreateWhatsAppUser, saveMessage, getRecentHistory, updateUserProfile } from "@/lib/supabase";
 import { generateResponse, detectUserInfo } from "@/lib/gemini";
 import { sendWhatsAppMessage } from "@/lib/twilio";
+import twilio from "twilio";
 
 export const maxDuration = 30;
 
 // ============================================
 // WHATSAPP WEBHOOK HANDLER (Twilio)
+// SECURED: Validates Twilio request signature
 // ============================================
 
 export async function POST(request: NextRequest) {
   try {
-    // Twilio sends form-encoded data
+    // KILL SWITCH — disable WhatsApp until properly configured
+    if (!process.env.TWILIO_AUTH_TOKEN || !process.env.TWILIO_WHATSAPP_NUMBER) {
+      return new NextResponse("WhatsApp not configured", { status: 503 });
+    }
+
+    // TWILIO SIGNATURE VALIDATION — reject forged requests
+    const twilioSignature = request.headers.get("x-twilio-signature");
+    if (!twilioSignature) {
+      return new NextResponse("Missing signature", { status: 403 });
+    }
+
+    const url = request.url;
     const formData = await request.formData();
-    const body = formData.get("Body") as string;
-    const from = formData.get("From") as string; // whatsapp:+91XXXXXXXXXX
-    const profileName = formData.get("ProfileName") as string;
+    const params: Record<string, string> = {};
+    formData.forEach((value, key) => {
+      params[key] = value as string;
+    });
+
+    const isValid = twilio.validateRequest(
+      process.env.TWILIO_AUTH_TOKEN!,
+      twilioSignature,
+      url,
+      params
+    );
+
+    if (!isValid) {
+      console.error("Invalid Twilio signature — possible forged request");
+      return new NextResponse("Invalid signature", { status: 403 });
+    }
+
+    // Signature valid — process the message
+    const body = params["Body"];
+    const from = params["From"]; // whatsapp:+91XXXXXXXXXX
+    const profileName = params["ProfileName"];
 
     if (!body || !from) {
       return new NextResponse("OK", { status: 200 });
     }
 
-    // Extract phone number from WhatsApp format
     const phone = from.replace("whatsapp:", "");
     const text = body.trim();
 
-    // Get or create user
     const user = await getOrCreateWhatsAppUser(phone, profileName);
 
-    // Detect user info from message
     const detectedInfo = detectUserInfo(text);
     if (Object.keys(detectedInfo).length > 0) {
       await updateUserProfile(user.id, detectedInfo);
       Object.assign(user, detectedInfo);
     }
 
-    // Save user message
     await saveMessage(user.id, "user", text, undefined, "whatsapp");
 
-    // Get chat history
     const history = await getRecentHistory(user.id, 30);
 
-    // Generate AI response
     const startTime = Date.now();
     const { text: aiResponse, tokensUsed } = await generateResponse(
       text,
@@ -58,17 +83,14 @@ export async function POST(request: NextRequest) {
     );
     const responseTime = Date.now() - startTime;
 
-    // Save AI response
     await saveMessage(user.id, "assistant", aiResponse, {
       tokens_used: tokensUsed,
       model_used: process.env.GEMINI_MODEL || "gemini-2.5-flash-lite",
       response_time_ms: responseTime,
     }, "whatsapp");
 
-    // Send response via Twilio WhatsApp
     await sendWhatsAppMessage(phone, aiResponse);
 
-    // Return empty TwiML (we send messages via API, not TwiML)
     return new NextResponse(
       '<?xml version="1.0" encoding="UTF-8"?><Response></Response>',
       {
