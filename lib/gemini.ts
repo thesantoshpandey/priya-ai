@@ -639,3 +639,40 @@ export function detectUserInfo(message: string): Record<string, any> {
 
   return updates;
 }
+
+// ============================================
+// TRANSCRIBE AUDIO — Extract text from voice message
+// ============================================
+
+export async function transcribeAudio(base64Audio: string): Promise<string | null> {
+  try {
+    const model = genAI.getGenerativeModel({
+      model: process.env.GEMINI_MODEL || "gemini-2.5-flash",
+    });
+
+    const result = await model.generateContent({
+      contents: [
+        {
+          role: "user",
+          parts: [
+            {
+              inlineData: {
+                mimeType: "audio/ogg",
+                data: base64Audio,
+              },
+            },
+            {
+              text: "Transcribe this audio message exactly as spoken. Return ONLY the transcription text, nothing else. If the audio is unclear, write [unclear]. If it contains no speech, write [no speech]. Preserve the original language (Hindi, English, Hinglish, Tamil, etc).",
+            },
+          ],
+        },
+      ],
+    });
+
+    const transcription = result.response.text().trim();
+    return transcription || null;
+  } catch (err) {
+    console.error("Transcription error:", err);
+    return null;
+  }
+}
