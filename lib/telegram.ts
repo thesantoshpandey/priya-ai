@@ -253,7 +253,7 @@ export async function generateVoice(text: string, preferredLanguage?: string): P
       marathi: "mr",
       gujarati: "gu",
       punjabi: "pa",
-      urdu: "ur",
+      urdu: "hi",  // Urdu not supported on sonic-3, falls back to Hindi,
       english: "en",
       odia: "or",
       assamese: "as",
@@ -268,7 +268,7 @@ export async function generateVoice(text: string, preferredLanguage?: string): P
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        model_id: "sonic-2",
+        model_id: "sonic-3",
         transcript: voiceText,
         voice: {
           mode: "id",
