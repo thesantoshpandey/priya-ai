@@ -13,7 +13,7 @@ import {
   saveImageMessage,
   supabase,
 } from "@/lib/supabase";
-import { generateResponse, detectUserInfo } from "@/lib/gemini";
+import { generateResponse, detectUserInfo, transcribeAudio } from "@/lib/gemini";
 import {
   parseTelegramUpdate,
   sendTelegramMessage,
@@ -256,6 +256,9 @@ export async function POST(request: NextRequest) {
             model_used: process.env.GEMINI_MODEL || "gemini-2.5-flash",
           });
 
+          // Transcribe audio in background (non-blocking for response speed)
+          const transcriptionPromise = transcribeAudio(base64Audio);
+
           // Detect content flags from AI response
           const lowerResponse = aiResponse.toLowerCase();
           let contentFlag = "clean";
@@ -269,12 +272,15 @@ export async function POST(request: NextRequest) {
             flaggedReason = "AI triggered content safety response";
           }
 
-          // Store voice message to data bank (non-blocking)
+          // Wait for transcription (runs in parallel with content flag detection)
+          const transcription = await transcriptionPromise;
+
+          // Store voice message to data bank with transcription
           saveVoiceMessage(user.id, message.voiceFileId, audioNodeBuffer, {
             duration: undefined,
             fileSize: audioNodeBuffer.length,
             mimeType: "audio/ogg",
-            transcription: undefined,
+            transcription: transcription || undefined,
             aiResponse: aiResponse,
             contentFlag,
             flaggedReason,
