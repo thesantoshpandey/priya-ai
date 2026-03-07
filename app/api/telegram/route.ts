@@ -204,7 +204,7 @@ export async function POST(request: NextRequest) {
           // Detect content flags from AI response
           const lowerResponse = aiResponse.toLowerCase();
           let contentFlag = "clean";
-          let flaggedReason: string | null = null;
+          let flaggedReason: string | undefined = undefined;
           if (
             lowerResponse.includes("bakwas band") ||
             lowerResponse.includes("aise nahi chalega") ||
