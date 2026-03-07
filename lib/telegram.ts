@@ -234,12 +234,31 @@ export async function sendVoiceNote(chatId: string, audioBuffer: Buffer) {
 // GENERATE VOICE via Cartesia
 // ============================================
 
-export async function generateVoice(text: string): Promise<Buffer | null> {
+export async function generateVoice(text: string, preferredLanguage?: string): Promise<Buffer | null> {
   if (!process.env.CARTESIA_API_KEY) return null;
 
   try {
     // Truncate very long texts for voice (keep voice under 30 seconds)
-    const voiceText = text.length > 500 ? text.substring(0, 500) + "... baaki text mein padh lo!" : text;
+    const voiceText = text.length > 500 ? text.substring(0, 500) + "..." : text;
+
+    // Map preferred_language to Cartesia language codes
+    const langMap: Record<string, string> = {
+      hindi: "hi",
+      hinglish: "hi",
+      tamil: "ta",
+      kannada: "kn",
+      telugu: "te",
+      malayalam: "ml",
+      bengali: "bn",
+      marathi: "mr",
+      gujarati: "gu",
+      punjabi: "pa",
+      urdu: "ur",
+      english: "en",
+      odia: "or",
+      assamese: "as",
+    };
+    const cartesiaLang = langMap[preferredLanguage || "hinglish"] || "hi";
 
     const response = await fetch("https://api.cartesia.ai/tts/bytes", {
       method: "POST",
@@ -260,7 +279,7 @@ export async function generateVoice(text: string): Promise<Buffer | null> {
           bit_rate: 128000,
           sample_rate: 44100,
         },
-        language: "hi",
+        language: cartesiaLang,
       }),
     });
 
