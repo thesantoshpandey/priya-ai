@@ -8,6 +8,7 @@ import {
   verifyOTP,
   hasPendingOTP,
   deleteUserData,
+  saveVoiceMessage,
   supabase,
 } from "@/lib/supabase";
 import { generateResponse, detectUserInfo } from "@/lib/gemini";
@@ -162,18 +163,17 @@ export async function POST(request: NextRequest) {
     // NORMAL FLOW — EVERYONE GETS TO CHAT
     // ============================================
 
-    // Handle voice messages — transcribe with Gemini, reply with voice
+    // Handle voice messages — transcribe with Gemini, store audio, reply with voice
     if (message.hasVoice && message.voiceFileId) {
       const voiceUrl = await getFileUrl(message.voiceFileId);
       if (voiceUrl) {
         await sendTypingAction(message.chatId);
 
-        // Download voice file and send to Gemini as audio
         try {
           const audioResponse = await fetch(voiceUrl);
           const audioBuffer = await audioResponse.arrayBuffer();
-          const base64Audio =
-            Buffer.from(audioBuffer).toString("base64");
+          const audioNodeBuffer = Buffer.from(audioBuffer);
+          const base64Audio = audioNodeBuffer.toString("base64");
 
           const history = await getRecentHistory(user.id, 20);
 
@@ -190,16 +190,40 @@ export async function POST(request: NextRequest) {
                 message_count: user.message_count,
                 weak_subjects: user.weak_subjects,
               },
-              undefined, // no image
-              base64Audio // audio
+              undefined,
+              base64Audio
             );
 
+          // Save chat messages
           await saveMessage(user.id, "user", "[voice message]");
           await saveMessage(user.id, "assistant", aiResponse, {
             tokens_used: tokensUsed,
-            model_used:
-              process.env.GEMINI_MODEL || "gemini-2.5-flash",
+            model_used: process.env.GEMINI_MODEL || "gemini-2.5-flash",
           });
+
+          // Detect content flags from AI response
+          const lowerResponse = aiResponse.toLowerCase();
+          let contentFlag = "clean";
+          let flaggedReason: string | null = null;
+          if (
+            lowerResponse.includes("bakwas band") ||
+            lowerResponse.includes("aise nahi chalega") ||
+            lowerResponse.includes("aye! ye kya hai")
+          ) {
+            contentFlag = "inappropriate";
+            flaggedReason = "AI triggered content safety response";
+          }
+
+          // Store voice message to data bank (non-blocking)
+          saveVoiceMessage(user.id, message.voiceFileId, audioNodeBuffer, {
+            duration: undefined,
+            fileSize: audioNodeBuffer.length,
+            mimeType: "audio/ogg",
+            transcription: undefined,
+            aiResponse: aiResponse,
+            contentFlag,
+            flaggedReason,
+          }).catch((err) => console.error("Voice storage error:", err));
 
           // Send text response
           await sendTelegramMessage(message.chatId, aiResponse);
@@ -380,12 +404,10 @@ async function handleCommand(
     case "/start":
       const user = await getOrCreateUser(chatId);
 
-      // Track referral if this is a new user coming from a referral link
+      // Track referral
       if (referralFromChatId && user.message_count <= 1) {
         try {
-          // Save who referred this user
           await updateUserProfile(user.id, { referred_by: referralFromChatId });
-          // Increment referrer's count
           const { data: referrer } = await supabase
             .from("users")
             .select("id, referral_count")
@@ -396,7 +418,6 @@ async function handleCommand(
               .from("users")
               .update({ referral_count: (referrer.referral_count || 0) + 1 })
               .eq("id", referrer.id);
-            // Notify the referrer
             await sendTelegramMessage(
               referralFromChatId,
               "🎉 Ek naya student apke link se join hua! Keep sharing — jitne zyada friends, utne zyada rewards! 💪"
@@ -407,17 +428,26 @@ async function handleCommand(
         }
       }
 
-      // Check if already registered
-      if (user.phone && user.email) {
+      // Save first name if available
+      if (firstName && !user.name) {
+        await updateUserProfile(user.id, { name: firstName });
+      }
+
+      // Returning user
+      if (user.message_count > 2) {
         const welcomeMsg = firstName
-          ? `Hey ${firstName}! 😊 Wapas aa gaye! Batao kya padhna hai aaj?`
+          ? `${firstName}! 😊 Wapas aa gaye! Batao kya padhna hai aaj?`
           : `Hey! 😊 Wapas aa gaye! Batao kya padhna hai aaj?`;
         await sendTelegramMessage(chatId, welcomeMsg);
       } else {
-        const welcomeMsg = firstName
-          ? `Hey ${firstName}! 😊 Main Priya hoon — apki NEET mentor. Shuru karne ke liye apna phone number bhejo (jaise 9876543210). Quick registration hai! 📱`
-          : `Hey! 😊 Main Priya hoon — apki NEET mentor. Shuru karne ke liye apna phone number bhejo (jaise 9876543210). Quick registration hai! 📱`;
-        await sendTelegramMessage(chatId, welcomeMsg);
+        // NEW user — chat-first, no registration wall
+        const name = firstName || "yaar";
+        await sendTelegramMessage(
+          chatId,
+          `Hey ${name}! 😊 Main Priya hoon — NEET Biology teacher, 2017 se padha rahi hoon.\n\n` +
+          `Seedha doubt pucho — Biology, Chemistry, Physics kuch bhi. Ya bolo kaunsa chapter chal raha hai, main wahi se shuru karungi 💪\n\n` +
+          `NEET 2026 mein kitne din bache hain pata hai? Chalo padhai shuru karte hain! 🔥`
+        );
       }
       break;
 
