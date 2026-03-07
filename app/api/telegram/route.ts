@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
+  supabase,
   getOrCreateUser,
   saveMessage,
   getRecentHistory,
@@ -26,38 +27,79 @@ import { sendOTP, generateOTP, detectPhoneNumber } from "@/lib/twilio";
 export const maxDuration = 30;
 
 // ============================================
-// SIMPLE RATE LIMITER (per user, in-memory)
+// RATE LIMITER — Per-minute (in-memory) + Daily per-type (Supabase-backed)
 // ============================================
 
-const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
-const RATE_LIMIT_PER_MINUTE = 10;
-const RATE_LIMIT_PER_DAY = 500;
-const dailyLimitMap = new Map<string, { count: number; resetAt: number }>();
+const LIMITS = {
+  text: 100,   // text messages per day
+  voice: 10,   // voice messages per day (Cartesia is expensive)
+  image: 20,   // image messages per day
+  minute: 10,  // any type per minute (spam guard)
+};
 
-function checkRateLimit(chatId: string): { allowed: boolean; reason?: string } {
+const minuteMap = new Map<string, { count: number; resetAt: number }>();
+
+function checkMinuteLimit(chatId: string): boolean {
   const now = Date.now();
-  const minuteData = rateLimitMap.get(chatId);
-
-  if (minuteData && now < minuteData.resetAt) {
-    if (minuteData.count >= RATE_LIMIT_PER_MINUTE) {
-      return { allowed: false, reason: "minute" };
-    }
-    minuteData.count++;
+  const data = minuteMap.get(chatId);
+  if (data && now < data.resetAt) {
+    if (data.count >= LIMITS.minute) return false;
+    data.count++;
   } else {
-    rateLimitMap.set(chatId, { count: 1, resetAt: now + 60000 });
+    minuteMap.set(chatId, { count: 1, resetAt: now + 60000 });
+  }
+  return true;
+}
+
+// Check + increment daily limit for a message type. Returns { allowed, remaining }
+async function checkDailyLimit(
+  userId: string,
+  type: "text" | "voice" | "image"
+): Promise<{ allowed: boolean; remaining: number }> {
+  const col = `daily_${type}_count`;
+  const limit = LIMITS[type];
+
+  // Get user's current counts
+  const { data: user } = await supabase
+    .from("users")
+    .select("daily_text_count, daily_voice_count, daily_image_count, daily_reset_at")
+    .eq("id", userId)
+    .single();
+
+  if (!user) return { allowed: false, remaining: 0 };
+
+  // Check if day has rolled over (reset at midnight IST = 18:30 UTC previous day)
+  const now = new Date();
+  const resetAt = new Date(user.daily_reset_at || 0);
+  const hoursSinceReset = (now.getTime() - resetAt.getTime()) / (1000 * 60 * 60);
+
+  if (hoursSinceReset >= 24) {
+    // Reset all counters
+    await supabase
+      .from("users")
+      .update({
+        daily_text_count: type === "text" ? 1 : 0,
+        daily_voice_count: type === "voice" ? 1 : 0,
+        daily_image_count: type === "image" ? 1 : 0,
+        daily_reset_at: now.toISOString(),
+      })
+      .eq("id", userId);
+    return { allowed: true, remaining: limit - 1 };
   }
 
-  const dayData = dailyLimitMap.get(chatId);
-  if (dayData && now < dayData.resetAt) {
-    if (dayData.count >= RATE_LIMIT_PER_DAY) {
-      return { allowed: false, reason: "daily" };
-    }
-    dayData.count++;
-  } else {
-    dailyLimitMap.set(chatId, { count: 1, resetAt: now + 86400000 });
+  // Check current count
+  const currentCount = (user as any)[col] || 0;
+  if (currentCount >= limit) {
+    return { allowed: false, remaining: 0 };
   }
 
-  return { allowed: true };
+  // Increment
+  await supabase
+    .from("users")
+    .update({ [col]: currentCount + 1 })
+    .eq("id", userId);
+
+  return { allowed: true, remaining: limit - currentCount - 1 };
 }
 
 // ============================================
@@ -146,20 +188,12 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: true });
     }
 
-    // Rate limiting
-    const rateCheck = checkRateLimit(message.chatId);
-    if (!rateCheck.allowed) {
-      if (rateCheck.reason === "daily") {
-        await sendTelegramMessage(
-          message.chatId,
-          "Bachhe, aaj ke liye bahut padhai ho gayi! 😴 Thoda rest karo, kal milte hain fresh mind ke saath. Remember — rest bhi preparation ka part hai! 💪"
-        );
-      } else {
-        await sendTelegramMessage(
-          message.chatId,
-          "Arrey thoda slow yaar! Itne saare messages ek saath? 😅 Ek ek karke bolo, main sab answer karungi!"
-        );
-      }
+    // Spam guard (per-minute, in-memory)
+    if (!checkMinuteLimit(message.chatId)) {
+      await sendTelegramMessage(
+        message.chatId,
+        "Arrey thoda slow yaar! Itne saare messages ek saath? 😅 Ek ek karke bolo, main sab answer karungi!"
+      );
       return NextResponse.json({ ok: true });
     }
 
@@ -218,6 +252,16 @@ export async function POST(request: NextRequest) {
 
     // Handle voice messages — transcribe with Gemini, store audio, reply with voice
     if (message.hasVoice && message.voiceFileId) {
+      // Daily voice limit check (Cartesia TTS is expensive)
+      const voiceLimit = await checkDailyLimit(user.id, "voice");
+      if (!voiceLimit.allowed) {
+        await sendTelegramMessage(
+          message.chatId,
+          "Aaj ke voice messages khatam ho gaye! 😅 Text mein type karo, main waise bhi help karungi. Kal fresh voice quota milega! 💪"
+        );
+        return NextResponse.json({ ok: true });
+      }
+
       const voiceUrl = await getFileUrl(message.voiceFileId);
       if (voiceUrl) {
         await sendTypingAction(message.chatId);
@@ -268,16 +312,20 @@ export async function POST(request: NextRequest) {
             flaggedReason = "AI triggered content safety response";
           }
 
-          // Store voice message to data bank (non-blocking)
-          saveVoiceMessage(user.id, message.voiceFileId, audioNodeBuffer, {
-            duration: undefined,
-            fileSize: audioNodeBuffer.length,
-            mimeType: "audio/ogg",
-            transcription: undefined,
-            aiResponse: aiResponse,
-            contentFlag,
-            flaggedReason,
-          }).catch((err) => console.error("Voice storage error:", err));
+          // Store voice message to data bank
+          try {
+            await saveVoiceMessage(user.id, message.voiceFileId, audioNodeBuffer, {
+              duration: undefined,
+              fileSize: audioNodeBuffer.length,
+              mimeType: "audio/ogg",
+              transcription: undefined,
+              aiResponse: aiResponse,
+              contentFlag,
+              flaggedReason,
+            });
+          } catch (err) {
+            console.error("Voice storage error:", err);
+          }
 
           // Send text response
           await sendTelegramMessage(message.chatId, aiResponse);
@@ -307,6 +355,15 @@ export async function POST(request: NextRequest) {
     // Handle photo messages — send to Gemini Vision
     let imageUrl: string | undefined;
     if (message.hasPhoto && message.photoFileId) {
+      // Daily image limit check
+      const imageLimit = await checkDailyLimit(user.id, "image");
+      if (!imageLimit.allowed) {
+        await sendTelegramMessage(
+          message.chatId,
+          "Aaj ke photo questions ka quota khatam! 📸 Type karke doubt pucho, main solve karungi. Kal fresh quota milega!"
+        );
+        return NextResponse.json({ ok: true });
+      }
       const url = await getFileUrl(message.photoFileId);
       if (url) {
         imageUrl = url;
@@ -393,6 +450,16 @@ export async function POST(request: NextRequest) {
     // NORMAL AI RESPONSE
     const history = await getRecentHistory(user.id, 30);
     const startTime = Date.now();
+
+    // Daily text limit check
+    const textLimit = await checkDailyLimit(user.id, "text");
+    if (!textLimit.allowed) {
+      await sendTelegramMessage(
+        message.chatId,
+        "Bachhe, aaj ke liye bahut padhai ho gayi! 😴 Thoda rest karo, kal milte hain fresh mind ke saath. Remember — rest bhi preparation ka part hai! 💪"
+      );
+      return NextResponse.json({ ok: true });
+    }
 
     const { text: aiResponse, tokensUsed } = await generateResponse(
       message.text,
