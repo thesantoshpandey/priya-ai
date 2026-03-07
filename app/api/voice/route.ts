@@ -67,18 +67,18 @@ export async function POST(request: NextRequest) {
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            model_id: "sonic-2",
+            model_id: "sonic-3",
             transcript: aiResponse,
             voice: {
               mode: "id",
-              id: process.env.CARTESIA_VOICE_ID || "a0e99841-438c-4a64-b679-ae501e7d6091", // Default female Indian English
+              id: process.env.CARTESIA_VOICE_ID || "bef6b65a-abe0-4298-957f-3e41954dfb1c", // Priya PP voice clone
             },
             output_format: {
               container: "mp3",
               bit_rate: 128000,
               sample_rate: 44100,
             },
-            language: "hi", // Hindi
+            language: user.preferred_language === "english" ? "en" : "hi", // Auto from user preference
           }),
         });
 
