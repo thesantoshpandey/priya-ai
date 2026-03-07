@@ -40,6 +40,9 @@ interface VoiceMessage {
   content_flag: string;
   flagged_reason: string | null;
   ai_response: string | null;
+  transcription: string | null;
+  storage_path: string | null;
+  audioUrl: string | null;
   file_size_bytes: number | null;
   created_at: string;
   users: { name: string | null; telegram_username: string | null } | null;
@@ -396,10 +399,33 @@ export default function AdminDashboard() {
                         {timeAgo(v.created_at)}{v.file_size_bytes ? ` · ${(v.file_size_bytes / 1024).toFixed(1)}KB` : ""}
                       </div>
                     </div>
+                    {v.audioUrl && (
+                      <div style={{ marginBottom: "10px" }}>
+                        <audio controls preload="none" style={{ width: "100%", height: "36px", borderRadius: "8px" }}>
+                          <source src={v.audioUrl} type="audio/ogg" />
+                          <source src={v.audioUrl} type="audio/mpeg" />
+                        </audio>
+                      </div>
+                    )}
+                    {v.transcription && (
+                      <div style={{ fontSize: "13px", color: "#111827", background: "#F0F9FF", borderRadius: "8px",
+                        padding: "10px 14px", marginBottom: "8px", lineHeight: 1.5 }}>
+                        <span style={{ fontSize: "10px", fontWeight: 700, color: "#3B82F6", textTransform: "uppercase" as const,
+                          letterSpacing: "0.05em", display: "block", marginBottom: "4px" }}>Student said:</span>
+                        {v.transcription}
+                      </div>
+                    )}
                     {v.ai_response && (
                       <div style={{ fontSize: "12px", color: "#6B7280", borderLeft: "3px solid #E5E7EB",
                         paddingLeft: "12px", lineHeight: 1.5 }}>
-                        {v.ai_response.substring(0, 150)}{v.ai_response.length > 150 && "..."}
+                        <span style={{ fontSize: "10px", fontWeight: 700, color: "#8B5CF6", textTransform: "uppercase" as const,
+                          letterSpacing: "0.05em" }}>Priya replied: </span>
+                        {v.ai_response.substring(0, 200)}{v.ai_response.length > 200 && "..."}
+                      </div>
+                    )}
+                    {v.flagged_reason && (
+                      <div style={{ fontSize: "11px", color: "#DC2626", marginTop: "8px", fontStyle: "italic" }}>
+                        ⚠️ {v.flagged_reason}
                       </div>
                     )}
                   </div>
