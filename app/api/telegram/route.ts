@@ -283,7 +283,7 @@ export async function POST(request: NextRequest) {
           await sendTelegramMessage(message.chatId, aiResponse);
 
           // Also send voice note if Cartesia is configured
-          const voiceBuffer = await generateVoice(aiResponse);
+          const voiceBuffer = await generateVoice(aiResponse, user.preferred_language);
           if (voiceBuffer) {
             await sendVoiceNote(message.chatId, voiceBuffer);
           }
