@@ -335,3 +335,91 @@ export async function getStats() {
     consented: consented || 0,
   };
 }
+
+// ============================================
+// VOICE MESSAGE STORAGE
+// ============================================
+
+export async function saveVoiceMessage(
+  userId: string,
+  telegramFileId: string,
+  audioBuffer: Buffer,
+  metadata: {
+    chatId?: string;
+    duration?: number;
+    fileSize?: number;
+    mimeType?: string;
+    transcription?: string;
+    aiResponse?: string;
+    contentFlag?: string;
+    flaggedReason?: string;
+  }
+) {
+  const timestamp = Date.now();
+  const storagePath = `${userId}/${timestamp}.ogg`;
+
+  // 1. Upload audio to storage bucket
+  const { error: uploadError } = await supabase.storage
+    .from("voice-messages")
+    .upload(storagePath, audioBuffer, {
+      contentType: metadata.mimeType || "audio/ogg",
+      upsert: false,
+    });
+
+  if (uploadError) {
+    console.error("Voice upload error:", uploadError);
+    // Don't throw — still save metadata even if upload fails
+  }
+
+  // 2. Save metadata to voice_messages table
+  const { data, error } = await supabase
+    .from("voice_messages")
+    .insert({
+      user_id: userId,
+      chat_id: metadata.chatId || null,
+      telegram_file_id: telegramFileId,
+      storage_path: uploadError ? null : storagePath,
+      duration_seconds: metadata.duration || null,
+      file_size_bytes: metadata.fileSize || null,
+      mime_type: metadata.mimeType || "audio/ogg",
+      transcription: metadata.transcription || null,
+      ai_response: metadata.aiResponse || null,
+      content_flag: metadata.contentFlag || "clean",
+      flagged_reason: metadata.flaggedReason || null,
+    })
+    .select("id")
+    .single();
+
+  if (error) {
+    console.error("Voice metadata save error:", error);
+  }
+
+  return data?.id || null;
+}
+
+export async function getVoiceMessages(
+  userId?: string,
+  flagFilter?: string,
+  limit: number = 50
+) {
+  let query = supabase
+    .from("voice_messages")
+    .select("*, users!inner(name, telegram_username, telegram_chat_id)")
+    .order("created_at", { ascending: false })
+    .limit(limit);
+
+  if (userId) query = query.eq("user_id", userId);
+  if (flagFilter) query = query.eq("content_flag", flagFilter);
+
+  const { data, error } = await query;
+  if (error) throw error;
+  return data || [];
+}
+
+export async function getVoiceAudioUrl(storagePath: string) {
+  const { data } = await supabase.storage
+    .from("voice-messages")
+    .createSignedUrl(storagePath, 3600); // 1 hour expiry
+
+  return data?.signedUrl || null;
+}
