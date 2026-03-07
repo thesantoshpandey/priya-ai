@@ -241,24 +241,9 @@ export async function generateVoice(text: string, preferredLanguage?: string): P
     // Truncate very long texts for voice (keep voice under 30 seconds)
     const voiceText = text.length > 500 ? text.substring(0, 500) + "..." : text;
 
-    // Map preferred_language to Cartesia language codes
-    const langMap: Record<string, string> = {
-      hindi: "hi",
-      hinglish: "hi",
-      tamil: "ta",
-      kannada: "kn",
-      telugu: "te",
-      malayalam: "ml",
-      bengali: "bn",
-      marathi: "mr",
-      gujarati: "gu",
-      punjabi: "pa",
-      urdu: "ur",
-      english: "en",
-      odia: "or",
-      assamese: "as",
-    };
-    const cartesiaLang = langMap[preferredLanguage || "hinglish"] || "hi";
+    // Cartesia sonic-2 only supports hi and en — all other Indian languages fall back to hi
+    // The PP voice clone is Hindi-accented so hi gives best results for all Devanagari+ languages
+    const cartesiaLang = preferredLanguage === "english" ? "en" : "hi";
 
     const response = await fetch("https://api.cartesia.ai/tts/bytes", {
       method: "POST",
