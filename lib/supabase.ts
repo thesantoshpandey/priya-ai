@@ -488,3 +488,88 @@ export async function saveImageMessage(
 
   return data?.id || null;
 }
+
+// ============================================
+// IMAGE MODERATION — Strikes, Bans, Logging
+// ============================================
+
+export async function isUserBanned(userId: string): Promise<boolean> {
+  const { data } = await supabase
+    .from("users")
+    .select("is_banned")
+    .eq("id", userId)
+    .single();
+  return data?.is_banned === true;
+}
+
+export async function isImageRestricted(userId: string): Promise<boolean> {
+  const { data } = await supabase
+    .from("users")
+    .select("image_restricted_until")
+    .eq("id", userId)
+    .single();
+  if (!data?.image_restricted_until) return false;
+  return new Date(data.image_restricted_until) > new Date();
+}
+
+export async function getUserStrikes(userId: string): Promise<number> {
+  const { data } = await supabase
+    .from("users")
+    .select("content_strikes")
+    .eq("id", userId)
+    .single();
+  return data?.content_strikes || 0;
+}
+
+export async function applyStrike(
+  userId: string,
+  strikeResult: { action: string; newStrikeCount: number },
+  modResult: { category: string; reason?: string }
+): Promise<void> {
+  const updates: any = {
+    content_strikes: strikeResult.newStrikeCount,
+  };
+
+  if (strikeResult.action === "ban") {
+    updates.is_banned = true;
+    updates.banned_at = new Date().toISOString();
+    updates.ban_reason = modResult.category === "csam_suspect"
+      ? "CSAM content — POCSO Act violation"
+      : `${strikeResult.newStrikeCount} strikes — ${modResult.category}`;
+  }
+
+  if (strikeResult.action === "restrict") {
+    const restrictUntil = new Date();
+    restrictUntil.setHours(restrictUntil.getHours() + 24);
+    updates.image_restricted_until = restrictUntil.toISOString();
+  }
+
+  const { error } = await supabase
+    .from("users")
+    .update(updates)
+    .eq("id", userId);
+
+  if (error) console.error("Failed to apply strike:", error);
+}
+
+export async function logModeration(
+  userId: string,
+  chatId: string,
+  eventType: string,
+  modResult: { category: string; confidence: string; reason?: string; action: string },
+  extra?: { strike_count?: number }
+): Promise<void> {
+  const { error } = await supabase.from("moderation_log").insert({
+    user_id: userId,
+    telegram_chat_id: chatId,
+    event_type: eventType,
+    category: modResult.category,
+    confidence: modResult.confidence,
+    reason: modResult.reason,
+    action_taken: modResult.action,
+    strike_count: extra?.strike_count,
+    metadata: {},
+  });
+
+  if (error) console.error("Failed to log moderation:", error);
+}

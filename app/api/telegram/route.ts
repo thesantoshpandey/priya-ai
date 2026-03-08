@@ -12,8 +12,14 @@ import {
   saveVoiceMessage,
   saveImageMessage,
   supabase,
+  isUserBanned,
+  isImageRestricted,
+  getUserStrikes,
+  applyStrike,
+  logModeration,
 } from "@/lib/supabase";
 import { generateResponse, detectUserInfo, transcribeAudio } from "@/lib/gemini";
+import { screenImage, getStrikeAction } from "@/lib/image-moderation";
 import {
   parseTelegramUpdate,
   sendTelegramMessage,
@@ -311,20 +317,97 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Handle photo messages — send to Gemini Vision
-    let imageUrl: string | undefined;
+    // ============================================
+    // BAN CHECK
+    // ============================================
+    if (await isUserBanned(user.id)) {
+      await sendTelegramMessage(
+        message.chatId,
+        "Aapka account ban kar diya gaya hai inappropriate content ke liye. Support@priyaai.com pe contact karo."
+      );
+      return NextResponse.json({ ok: true });
+    }
+
+    // ============================================
+    // IMAGE MODERATION PIPELINE — 3 Layers
+    // Layer 1: Gemini Vision pre-screen (classification)
+    // Layer 2: Gemini safety filter (response-level)
+    // Layer 3: Progressive strikes (warn → restrict → ban)
+    // ============================================
+    let imageData: { base64: string; mimeType: string } | undefined;
+
     if (message.hasPhoto && message.photoFileId) {
-      const url = await getFileUrl(message.photoFileId);
-      if (url) {
-        imageUrl = url;
-        // Fall through to normal AI processing with image
-      } else {
+      // Check if user is image-restricted (Strike 2 penalty)
+      if (await isImageRestricted(user.id)) {
         await sendTelegramMessage(
           message.chatId,
-          "Photo nahi khul payi 😅 Please dubara try karo ya question type karke bhej do!"
+          "Aapki photo bhejne ki permission abhi band hai ⏳ 24 ghante baad try karo. Tab tak question type karke bhej do!"
         );
         return NextResponse.json({ ok: true });
       }
+
+      const url = await getFileUrl(message.photoFileId);
+      if (!url) {
+        await sendTelegramMessage(
+          message.chatId,
+          "Photo download nahi ho payi 😅 Dubara try karo ya question type karke bhej do!"
+        );
+        return NextResponse.json({ ok: true });
+      }
+
+      // Download image ONCE — reuse for screening + Gemini + storage
+      try {
+        const imgResponse = await fetch(url);
+        const imgBuffer = await imgResponse.arrayBuffer();
+        const base64 = Buffer.from(imgBuffer).toString("base64");
+        const mimeType = imgResponse.headers.get("content-type") || "image/jpeg";
+        imageData = { base64, mimeType };
+      } catch (err) {
+        console.error("Image download error:", err);
+        await sendTelegramMessage(
+          message.chatId,
+          "Photo load nahi ho payi 😅 Dubara bhejo ya question type kar do!"
+        );
+        return NextResponse.json({ ok: true });
+      }
+
+      // ========== LAYER 1: PRE-SCREEN ==========
+      await sendTypingAction(message.chatId);
+      const modResult = await screenImage(imageData.base64, imageData.mimeType);
+
+      console.log(`[IMAGE] User ${user.telegram_username || user.id}: ${modResult.category} (${modResult.confidence}) — ${modResult.reason}`);
+
+      // Log every screening decision
+      await logModeration(user.id, message.chatId, "image_screen", modResult);
+
+      if (!modResult.safe) {
+        // ========== LAYER 3: PROGRESSIVE STRIKES ==========
+        const userStrikes = await getUserStrikes(user.id);
+        const strikeResult = getStrikeAction(userStrikes, modResult);
+
+        if (strikeResult.action !== "none") {
+          await applyStrike(user.id, strikeResult, modResult);
+          await logModeration(user.id, message.chatId, strikeResult.action, {
+            ...modResult,
+            action: strikeResult.action,
+          }, { strike_count: strikeResult.newStrikeCount });
+
+          await sendTelegramMessage(message.chatId, strikeResult.message);
+
+          // Save metadata only for explicit images (no image data stored)
+          if (modResult.category === "explicit" || modResult.category === "csam_suspect") {
+            await saveImageMessage(user.id, message.photoFileId!, Buffer.alloc(0), {
+              mimeType: imageData.mimeType,
+              aiResponse: "[BLOCKED] " + modResult.category + ": " + modResult.reason,
+              contentFlag: modResult.category,
+              flaggedReason: modResult.reason,
+            });
+          }
+
+          return NextResponse.json({ ok: true });
+        }
+      }
+      // Image is safe — continue to educational response
     }
 
     await sendTypingAction(message.chatId);
@@ -414,7 +497,7 @@ export async function POST(request: NextRequest) {
         weak_subjects: user.weak_subjects,
         preferred_language: user.preferred_language,
       },
-      imageUrl
+      imageData
     );
 
     const responseTime = Date.now() - startTime;
@@ -428,14 +511,12 @@ export async function POST(request: NextRequest) {
     await sendTelegramMessage(message.chatId, aiResponse);
 
     // ============================================
-    // STORE IMAGE if this was a photo message
+    // STORE IMAGE (only safe, pre-screened images)
     // ============================================
-    if (imageUrl && message.photoFileId) {
+    if (imageData && message.photoFileId) {
       (async () => {
         try {
-          const imgRes = await fetch(imageUrl);
-          const imgBuffer = Buffer.from(await imgRes.arrayBuffer());
-          const mimeType = imgRes.headers.get("content-type") || "image/jpeg";
+          const imgBuffer = Buffer.from(imageData!.base64, "base64");
 
           let imgFlag = "clean";
           let imgFlagReason: string | undefined = undefined;
@@ -447,7 +528,7 @@ export async function POST(request: NextRequest) {
 
           await saveImageMessage(user.id, message.photoFileId!, imgBuffer, {
             fileSize: imgBuffer.length,
-            mimeType,
+            mimeType: imageData!.mimeType,
             caption: message.text !== "[photo]" ? message.text : undefined,
             aiResponse,
             contentFlag: imgFlag,

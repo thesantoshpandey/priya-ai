@@ -1,4 +1,4 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
+import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from "@google/generative-ai";
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
 
@@ -175,12 +175,18 @@ export async function generateResponse(
   userMessage: string,
   chatHistory: ChatMessage[],
   userContext: UserContext,
-  imageUrl?: string,
+  imageData?: { base64: string; mimeType: string },
   audioBase64?: string
 ): Promise<{ text: string; tokensUsed: number }> {
   const model = genAI.getGenerativeModel({
     model: process.env.GEMINI_MODEL || "gemini-2.5-flash",
     systemInstruction: buildContextualPrompt(userContext),
+    safetySettings: [
+      { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE },
+      { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
+      { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
+      { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
+    ],
   });
 
   // Build conversation history for Gemini
@@ -192,24 +198,14 @@ export async function generateResponse(
   // Add current message (with optional image or audio)
   const currentParts: any[] = [];
 
-  if (imageUrl) {
-    try {
-      // Download image from Telegram and convert to base64
-      const imageResponse = await fetch(imageUrl);
-      const imageBuffer = await imageResponse.arrayBuffer();
-      const base64Image = Buffer.from(imageBuffer).toString("base64");
-      const mimeType =
-        imageResponse.headers.get("content-type") || "image/jpeg";
-
-      currentParts.push({
-        inlineData: {
-          mimeType,
-          data: base64Image,
-        },
-      });
-    } catch (err) {
-      console.error("Failed to fetch image:", err);
-    }
+  if (imageData) {
+    // Image already downloaded and pre-screened by moderation pipeline
+    currentParts.push({
+      inlineData: {
+        mimeType: imageData.mimeType,
+        data: imageData.base64,
+      },
+    });
   }
 
   if (audioBase64) {
@@ -222,7 +218,7 @@ export async function generateResponse(
   }
 
   currentParts.push({
-    text: imageUrl
+    text: imageData
       ? userMessage === "[photo]"
         ? "Student ne ye photo bheji hai. Agar ye koi NEET question, diagram, textbook page, or problem hai toh solve karo aur explain karo. Agar kuch aur hai toh naturally respond karo. RESPOND IN THE SAME LANGUAGE THE STUDENT HAS BEEN USING."
         : userMessage
@@ -290,8 +286,24 @@ export async function generateResponse(
         };
       }
 
-      // Handle other errors
-      console.error("Gemini API error:", error);
+      // Handle Gemini safety blocks specifically
+      const errMsg = error?.message || String(error);
+      if (
+        errMsg.includes("SAFETY") ||
+        errMsg.includes("blocked") ||
+        errMsg.includes("SEXUALLY_EXPLICIT") ||
+        errMsg.includes("HARM_CATEGORY") ||
+        errMsg.includes("prompt was blocked")
+      ) {
+        console.warn("[GEMINI] Safety block during generation:", errMsg);
+        return {
+          text: "Ye content mujhse process nahi ho raha 🤔 Agar ye NEET ka question hai toh please text mein likh ke bhejo, main solve kar dungi!",
+          tokensUsed: 0,
+        };
+      }
+
+      // Actual technical errors
+      console.error("Gemini API error:", errMsg);
       return {
         text: "Oops, kuch technical problem aa gayi. Ek minute mein try karna please 🙏",
         tokensUsed: 0,
