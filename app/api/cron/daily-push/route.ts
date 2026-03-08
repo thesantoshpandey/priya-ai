@@ -194,7 +194,8 @@ export async function GET(request: NextRequest) {
   // Get all users
   const { data: users, error } = await supabase
     .from("users")
-    .select("telegram_chat_id");
+    .select("id, telegram_chat_id")
+    .or("bot_blocked.is.null,bot_blocked.eq.false");
 
   if (error || !users) {
     return NextResponse.json(
@@ -211,7 +212,16 @@ export async function GET(request: NextRequest) {
     if (user.telegram_chat_id) {
       const result = await sendToUser(user.telegram_chat_id, content);
       if (result.success) sent++;
-      else if (result.blocked) blocked++;
+      else if (result.blocked) {
+        blocked++;
+        // Mark user as blocked so we skip them next time
+        try {
+          await supabase
+            .from("users")
+            .update({ bot_blocked: true })
+            .eq("id", user.id);
+        } catch (e) {}
+      }
       else failed++;
       await new Promise((r) => setTimeout(r, 50));
     }
