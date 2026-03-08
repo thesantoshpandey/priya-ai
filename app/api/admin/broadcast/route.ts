@@ -13,7 +13,7 @@ async function sendBroadcastMessage(chatId: string, text: string) {
       }),
     });
     const data = await res.json();
-    return { success: data.ok, chatId };
+    return { success: data.ok, chatId, blocked: data.error_code === 403 || data.error_code === 400 };
   } catch (error) {
     return { success: false, chatId, error: String(error) };
   }
@@ -60,10 +60,11 @@ export async function POST(request: NextRequest) {
       .gte("last_message_at", weekAgo.toISOString());
     users = data || [];
   } else {
-    // Send to ALL users
+    // Send to ALL non-blocked users
     const { data } = await supabase
       .from("users")
-      .select("telegram_chat_id");
+      .select("id, telegram_chat_id")
+      .or("bot_blocked.is.null,bot_blocked.eq.false");
     users = data || [];
   }
 
@@ -73,6 +74,12 @@ export async function POST(request: NextRequest) {
     if (user.telegram_chat_id) {
       const result = await sendBroadcastMessage(user.telegram_chat_id, message);
       results.push(result);
+      // Mark blocked users
+      if (!result.success && user.id) {
+        try {
+          await supabase.from("users").update({ bot_blocked: true }).eq("id", user.id);
+        } catch (e) {}
+      }
       await new Promise((r) => setTimeout(r, 50));
     }
   }
