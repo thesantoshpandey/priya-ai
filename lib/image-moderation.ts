@@ -247,3 +247,99 @@ export function getStrikeAction(
     newStrikeCount: currentStrikes,
   };
 }
+
+// ============================================
+// TEXT CONTENT MODERATION — Gemini contextual
+// Replaces pure regex: understands NEET biology
+// terms like "sexual reproduction", "sex hormones",
+// "sex determination" vs actual harassment
+// ============================================
+
+export type TextModerationResult = {
+  dominated: boolean;          // true = harassment, take action
+  category: "academic" | "clean" | "harassment" | "error";
+  reason: string;
+};
+
+// These have ZERO academic context — instant flag, no Gemini needed
+const INSTANT_HARASSMENT = [
+  /\bchod|bhosd|randi|madarchod|behenchod|chut\b/i,
+  /\b(chodunga|chodne|rape\b|molest)/i,
+];
+
+// These MIGHT be academic OR harassment — need Gemini context
+const AMBIGUOUS_PATTERNS = [
+  /\b(sex|nude|boob|ass\b|pussy|cock|penis|vagina|naked|porn|dick|lund|gaand)/i,
+  /\b(suck|fuck|f\*ck|s\*ck)/i,
+  /\b(hot\s+ho|sexy\s+ho|love\s+you)/i,
+];
+
+export async function screenText(
+  messageText: string,
+  recentHistory: { role: string; content: string }[]
+): Promise<TextModerationResult> {
+  // Layer 1: Instant-flag patterns (no academic use case)
+  if (INSTANT_HARASSMENT.some(p => p.test(messageText))) {
+    return { dominated: true, category: "harassment", reason: "Unambiguous slur/threat detected" };
+  }
+
+  // Layer 2: Check if any ambiguous pattern matches
+  if (!AMBIGUOUS_PATTERNS.some(p => p.test(messageText))) {
+    return { dominated: false, category: "clean", reason: "No flagged patterns" };
+  }
+
+  // Layer 3: Ambiguous keyword found — ask Gemini for context
+  try {
+    const model = genAI.getGenerativeModel({
+      model: process.env.GEMINI_MODEL || "gemini-2.5-flash",
+    });
+
+    // Give Gemini the last 5 messages for context
+    const contextMessages = recentHistory.slice(-5).map(m =>
+      `${m.role === "assistant" ? "Priya" : "Student"}: ${m.content}`
+    ).join("\n");
+
+    const prompt = `You are a content moderator for a NEET exam preparation platform (Indian medical entrance exam). Students aged 15-21 use this.
+
+IMPORTANT CONTEXT: NEET Biology includes chapters on:
+- Sexual Reproduction in Flowering Plants (Class 12)
+- Human Reproduction (Class 12) — covers penis, vagina, ovary, testis, spermatogenesis, oogenesis
+- Reproductive Health (Class 12) — covers STDs, contraception
+- Sex Determination, Sex-Linked Inheritance
+- Endocrine System — sex hormones (estrogen, testosterone, FSH, LH)
+- Evolution — sexual selection
+
+These are LEGITIMATE academic topics. Students asking about them should NOT be flagged.
+
+Recent conversation:
+${contextMessages}
+
+New message from student: "${messageText}"
+
+Classify this message as EXACTLY ONE:
+- "academic" — asking about NEET/biology/science topics (even if using words like sex, reproduction, hormones, etc.)
+- "clean" — casual/friendly chat, not harmful
+- "harassment" — sexually explicit towards the teacher, inappropriate sexual content NOT related to academics, sexual threats, objectification
+
+Respond with ONLY a JSON object:
+{"category": "academic", "reason": "asking about sex hormones in endocrinology"}`;
+
+    const result = await model.generateContent({ contents: [{ role: "user", parts: [{ text: prompt }] }] });
+    let text = result.response.text().trim();
+    text = text.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
+
+    const parsed = JSON.parse(text);
+    const cat = parsed.category;
+    const reason = parsed.reason || "";
+
+    if (cat === "harassment") {
+      return { dominated: true, category: "harassment", reason };
+    }
+    return { dominated: false, category: cat || "clean", reason };
+
+  } catch (error: any) {
+    console.error("[TEXT-MOD] Gemini screening error:", error?.message);
+    // On error, DON'T block — let it through to main response
+    return { dominated: false, category: "error", reason: error?.message || "Gemini error" };
+  }
+}

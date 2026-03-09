@@ -19,7 +19,7 @@ import {
   logModeration,
 } from "@/lib/supabase";
 import { generateResponse, detectUserInfo, transcribeAudio } from "@/lib/gemini";
-import { screenImage, getStrikeAction } from "@/lib/image-moderation";
+import { screenImage, getStrikeAction, screenText } from "@/lib/image-moderation";
 import {
   parseTelegramUpdate,
   sendTelegramMessage,
@@ -330,35 +330,23 @@ export async function POST(request: NextRequest) {
 
 
     // ============================================
-    // TEXT CONTENT MODERATION
+    // TEXT CONTENT MODERATION — Gemini contextual
+    // Uses AI to distinguish "sexual reproduction" (NEET)
+    // from actual harassment. Regex only for zero-context slurs.
     // ============================================
-    const EXPLICIT_PATTERNS = [
-      /\b(s[uü]ck|f[uü]ck|d[i1]ck|sex|nude|boob|ass\b|pussy|cock|penis|vagina|naked|porn)/i,
-      /\bchod|lund|gaand|chut|randi|bhosd/i,
-      /\bma[ae]r[a]?\s+(d[i1]ck|lund)/i,
-      /\b(hot\s+ho|sexy\s+ho|beautiful.*love|love.*suck)/i,
-    ];
+    const recentForMod = await getRecentHistory(user.id, 5);
+    const textModResult = await screenText(message.text, recentForMod);
 
-    const HARASSMENT_PATTERNS = [
-      /\b(chodunga|chodne|rape|molest)/i,
-      /dekhna\s+chahog[ie]/i,
-    ];
-
-    const textLower = message.text.toLowerCase();
-    const isExplicit = EXPLICIT_PATTERNS.some(p => p.test(message.text));
-    const isHarassment = HARASSMENT_PATTERNS.some(p => p.test(message.text));
-
-    if (isExplicit || isHarassment) {
+    if (textModResult.dominated) {
       const currentStrikes = user.content_strikes || 0;
       const newStrikes = currentStrikes + 1;
-      const severity = isHarassment ? "harassment" : "explicit_text";
 
-      if (newStrikes >= 3 || isHarassment) {
-        // Permanent ban
+      if (newStrikes >= 3 || textModResult.category === "harassment") {
+        // Ban for harassment or 3rd strike
         await supabase.from("users").update({
           is_banned: true,
           banned_at: new Date().toISOString(),
-          ban_reason: `Auto-ban: ${severity} (strike ${newStrikes})`,
+          ban_reason: `Auto-ban: ${textModResult.category} — ${textModResult.reason}`,
           content_strikes: newStrikes,
         }).eq("id", user.id);
 
@@ -369,16 +357,15 @@ export async function POST(request: NextRequest) {
 
         try {
           await logModeration(user.id, message.chatId, "ban", {
-            category: severity,
+            category: textModResult.category,
             reason: message.text.substring(0, 100),
-            confidence: "1.0",
+            confidence: "high",
             action: "ban",
           }, { strike_count: newStrikes });
         } catch (e) {}
 
         return NextResponse.json({ ok: true });
       } else if (newStrikes === 2) {
-        // Second strike — strong warning
         await supabase.from("users").update({
           content_strikes: newStrikes,
         }).eq("id", user.id);
@@ -390,16 +377,15 @@ export async function POST(request: NextRequest) {
 
         try {
           await logModeration(user.id, message.chatId, "warn_final", {
-            category: severity,
+            category: textModResult.category,
             reason: message.text.substring(0, 100),
-            confidence: "1.0",
+            confidence: "high",
             action: "warn_final",
           }, { strike_count: newStrikes });
         } catch (e) {}
 
         return NextResponse.json({ ok: true });
       } else {
-        // First strike — warning
         await supabase.from("users").update({
           content_strikes: newStrikes,
         }).eq("id", user.id);
@@ -411,9 +397,9 @@ export async function POST(request: NextRequest) {
 
         try {
           await logModeration(user.id, message.chatId, "warn", {
-            category: severity,
+            category: textModResult.category,
             reason: message.text.substring(0, 100),
-            confidence: "1.0",
+            confidence: "high",
             action: "warn",
           }, { strike_count: newStrikes });
         } catch (e) {}
