@@ -328,6 +328,97 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: true });
     }
 
+
+    // ============================================
+    // TEXT CONTENT MODERATION
+    // ============================================
+    const EXPLICIT_PATTERNS = [
+      /\b(s[uü]ck|f[uü]ck|d[i1]ck|sex|nude|boob|ass\b|pussy|cock|penis|vagina|naked|porn)/i,
+      /\bchod|lund|gaand|chut|randi|bhosd/i,
+      /\bma[ae]r[a]?\s+(d[i1]ck|lund)/i,
+      /\b(hot\s+ho|sexy\s+ho|beautiful.*love|love.*suck)/i,
+    ];
+
+    const HARASSMENT_PATTERNS = [
+      /\b(chodunga|chodne|rape|molest)/i,
+      /dekhna\s+chahog[ie]/i,
+    ];
+
+    const textLower = message.text.toLowerCase();
+    const isExplicit = EXPLICIT_PATTERNS.some(p => p.test(message.text));
+    const isHarassment = HARASSMENT_PATTERNS.some(p => p.test(message.text));
+
+    if (isExplicit || isHarassment) {
+      const currentStrikes = user.content_strikes || 0;
+      const newStrikes = currentStrikes + 1;
+      const severity = isHarassment ? "harassment" : "explicit_text";
+
+      if (newStrikes >= 3 || isHarassment) {
+        // Permanent ban
+        await supabase.from("users").update({
+          is_banned: true,
+          banned_at: new Date().toISOString(),
+          ban_reason: `Auto-ban: ${severity} (strike ${newStrikes})`,
+          content_strikes: newStrikes,
+        }).eq("id", user.id);
+
+        await sendTelegramMessage(
+          message.chatId,
+          "Aapka account permanently ban kar diya gaya hai inappropriate content ke liye."
+        );
+
+        try {
+          await logModeration(user.id, message.chatId, "ban", {
+            category: severity,
+            reason: message.text.substring(0, 100),
+            confidence: 1.0,
+          }, { strike_count: newStrikes });
+        } catch (e) {}
+
+        return NextResponse.json({ ok: true });
+      } else if (newStrikes === 2) {
+        // Second strike — strong warning
+        await supabase.from("users").update({
+          content_strikes: newStrikes,
+        }).eq("id", user.id);
+
+        await sendTelegramMessage(
+          message.chatId,
+          "⚠️ Ye aapki LAST WARNING hai. Ek aur baar aisa message bheja toh account permanently ban ho jayega."
+        );
+
+        try {
+          await logModeration(user.id, message.chatId, "warn_final", {
+            category: severity,
+            reason: message.text.substring(0, 100),
+            confidence: 1.0,
+          }, { strike_count: newStrikes });
+        } catch (e) {}
+
+        return NextResponse.json({ ok: true });
+      } else {
+        // First strike — warning
+        await supabase.from("users").update({
+          content_strikes: newStrikes,
+        }).eq("id", user.id);
+
+        await sendTelegramMessage(
+          message.chatId,
+          "⚠️ Ye message appropriate nahi hai. Priya AI sirf NEET preparation ke liye hai. Please respectful rahein."
+        );
+
+        try {
+          await logModeration(user.id, message.chatId, "warn", {
+            category: severity,
+            reason: message.text.substring(0, 100),
+            confidence: 1.0,
+          }, { strike_count: newStrikes });
+        } catch (e) {}
+
+        return NextResponse.json({ ok: true });
+      }
+    }
+
     // ============================================
     // IMAGE MODERATION PIPELINE — 3 Layers
     // Layer 1: Gemini Vision pre-screen (classification)
@@ -430,7 +521,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    await saveMessage(user.id, "user", message.text);
+    // User message saved AFTER history retrieval to avoid duplication in Gemini context
 
     // OTP FLOW for minor parental consent (separate from registration OTP)
     const otpMatch = message.text.match(/^\s*(\d{6})\s*$/);
@@ -482,6 +573,9 @@ export async function POST(request: NextRequest) {
 
     // NORMAL AI RESPONSE
     const history = await getRecentHistory(user.id, 30);
+
+    // Save user message AFTER getting history (prevents current message appearing twice in Gemini context)
+    await saveMessage(user.id, "user", message.text);
     const startTime = Date.now();
 
     const { text: aiResponse, tokensUsed } = await generateResponse(
