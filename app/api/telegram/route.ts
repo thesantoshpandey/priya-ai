@@ -729,7 +729,8 @@ async function handleCommand(
           chatId,
           `Hey ${name}! 😊 Main Priya hoon — NEET Biology teacher, 2017 se padha rahi hoon.\n\n` +
           `Seedha doubt pucho — Biology, Chemistry, Physics kuch bhi! Photo bhejo, voice bhejo, ya type karo 💪\n\n` +
-          `Hindi, Tamil, Kannada, Telugu, Bengali, Marathi, Malayalam — apni bhasha mein padho! 🇮🇳🔥`
+          `Hindi, Tamil, Kannada, Telugu, Bengali, Marathi, Malayalam — apni bhasha mein padho! 🇮🇳🔥\n\n` +
+          `📋 Messages stored & monitored for safety. By using this bot, you agree to our terms. Inappropriate content will result in a ban.`
         );
       }
       break;
