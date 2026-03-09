@@ -341,8 +341,8 @@ export async function POST(request: NextRequest) {
       const currentStrikes = user.content_strikes || 0;
       const newStrikes = currentStrikes + 1;
 
-      if (newStrikes >= 3 || textModResult.category === "harassment") {
-        // Ban for harassment or 3rd strike
+      if (newStrikes >= 3) {
+        // Ban on 3rd strike
         await supabase.from("users").update({
           is_banned: true,
           banned_at: new Date().toISOString(),
@@ -440,7 +440,9 @@ export async function POST(request: NextRequest) {
         const imgResponse = await fetch(url);
         const imgBuffer = await imgResponse.arrayBuffer();
         const base64 = Buffer.from(imgBuffer).toString("base64");
-        const mimeType = imgResponse.headers.get("content-type") || "image/jpeg";
+        const rawMime = imgResponse.headers.get("content-type") || "image/jpeg";
+        // Telegram often returns application/octet-stream — Gemini needs actual image MIME
+        const mimeType = rawMime.startsWith("image/") ? rawMime : "image/jpeg";
         imageData = { base64, mimeType };
       } catch (err) {
         console.error("Image download error:", err);

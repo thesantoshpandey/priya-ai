@@ -262,16 +262,23 @@ export type TextModerationResult = {
 };
 
 // These have ZERO academic context — instant flag, no Gemini needed
+// IMPORTANT: "chodo" means "leave/quit" in Hindi — only match sexual forms
+// "chut" must be exact — not prefix of "chutki", "chuti" etc.
 const INSTANT_HARASSMENT = [
-  /\bchod|bhosd|randi|madarchod|behenchod|chut\b/i,
-  /\b(chodunga|chodne|rape\b|molest)/i,
+  /\bbhosdik|bhosdike|bhosdi|bhosd/i,
+  /\brandi|randiyo|randwa/i,
+  /\bmadarchod|behenchod|behen\s*chod/i,
+  /\b(chodunga|chodne|chodta|chod\s+dunga|chod\s+diya|chodke)\b/i,
+  /\bchut\b/i,           // exact word only — not "chuti", "chutki", "chutkara"
+  /\b(rape|molest)\b/i,  // English — always abusive
 ];
 
 // These MIGHT be academic OR harassment — need Gemini context
 const AMBIGUOUS_PATTERNS = [
   /\b(sex|nude|boob|ass\b|pussy|cock|penis|vagina|naked|porn|dick|lund|gaand)/i,
   /\b(suck|fuck|f\*ck|s\*ck)/i,
-  /\b(hot\s+ho|sexy\s+ho|love\s+you)/i,
+  /\b(hot\s+ho|sexy\s+ho)/i,
+  /\b(love\s+you|i\s+love)\b/i,  // puberty kids — let Gemini decide
 ];
 
 export async function screenText(
@@ -299,7 +306,7 @@ export async function screenText(
       `${m.role === "assistant" ? "Priya" : "Student"}: ${m.content}`
     ).join("\n");
 
-    const prompt = `You are a content moderator for a NEET exam preparation platform (Indian medical entrance exam). Students aged 15-21 use this.
+    const prompt = `You are a content moderator for a NEET exam preparation platform (Indian medical entrance exam). Students aged 15-21 use this. The bot plays the role of "Priya Ma'am" — a female teacher.
 
 IMPORTANT CONTEXT: NEET Biology includes chapters on:
 - Sexual Reproduction in Flowering Plants (Class 12)
@@ -308,21 +315,29 @@ IMPORTANT CONTEXT: NEET Biology includes chapters on:
 - Sex Determination, Sex-Linked Inheritance
 - Endocrine System — sex hormones (estrogen, testosterone, FSH, LH)
 - Evolution — sexual selection
-
 These are LEGITIMATE academic topics. Students asking about them should NOT be flagged.
+
+STUDENT BEHAVIOR CONTEXT:
+- These are 15-21 year old Indian students. Many are teenagers going through puberty.
+- "I love you ma'am", "love you", "you're the best" = student showing affection to teacher. This is CLEAN, not harassment.
+- "chodo" / "chod do" / "chod de" = Hindi for "leave it" / "forget it". This is CLEAN.
+- Casual compliments or emotional messages are CLEAN unless they are explicitly sexual or objectifying.
+- Only flag as harassment if the message is SEXUALLY EXPLICIT, OBJECTIFYING, or THREATENING towards the teacher.
 
 Recent conversation:
 ${contextMessages}
 
 New message from student: "${messageText}"
 
-Classify this message as EXACTLY ONE:
-- "academic" — asking about NEET/biology/science topics (even if using words like sex, reproduction, hormones, etc.)
-- "clean" — casual/friendly chat, not harmful
-- "harassment" — sexually explicit towards the teacher, inappropriate sexual content NOT related to academics, sexual threats, objectification
+Classify as EXACTLY ONE:
+- "academic" — NEET/biology/science topics (even with words like sex, reproduction, hormones)
+- "clean" — casual chat, student affection, everyday Hindi, not harmful
+- "harassment" — ONLY if sexually explicit/objectifying/threatening towards the teacher (e.g. "suck me", "send nudes", "you're hot sexy", describing sexual acts)
+
+Be VERY careful: false positives hurt real students. When in doubt, classify as "clean".
 
 Respond with ONLY a JSON object:
-{"category": "academic", "reason": "asking about sex hormones in endocrinology"}`;
+{"category": "clean", "reason": "student expressing affection to teacher"}`;
 
     const result = await model.generateContent({ contents: [{ role: "user", parts: [{ text: prompt }] }] });
     let text = result.response.text().trim();
