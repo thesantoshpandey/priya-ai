@@ -371,7 +371,8 @@ export async function POST(request: NextRequest) {
           await logModeration(user.id, message.chatId, "ban", {
             category: severity,
             reason: message.text.substring(0, 100),
-            confidence: 1.0,
+            confidence: "1.0",
+            action: "ban",
           }, { strike_count: newStrikes });
         } catch (e) {}
 
@@ -391,7 +392,8 @@ export async function POST(request: NextRequest) {
           await logModeration(user.id, message.chatId, "warn_final", {
             category: severity,
             reason: message.text.substring(0, 100),
-            confidence: 1.0,
+            confidence: "1.0",
+            action: "warn_final",
           }, { strike_count: newStrikes });
         } catch (e) {}
 
@@ -411,7 +413,8 @@ export async function POST(request: NextRequest) {
           await logModeration(user.id, message.chatId, "warn", {
             category: severity,
             reason: message.text.substring(0, 100),
-            confidence: 1.0,
+            confidence: "1.0",
+            action: "warn",
           }, { strike_count: newStrikes });
         } catch (e) {}
 
