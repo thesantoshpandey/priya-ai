@@ -33,8 +33,9 @@ export type StrikeAction = {
 
 export async function screenImage(imageBase64: string, mimeType: string): Promise<ModerationResult> {
   // Use flash model for speed — this is a classification task, not generation
+  // gemini-2.0-flash deprecated Feb 2026 — use same model as main response
   const model = genAI.getGenerativeModel({
-    model: "gemini-2.0-flash",
+    model: process.env.GEMINI_MODEL || "gemini-2.5-flash",
     safetySettings: [
       // Set to BLOCK_NONE so we can SEE what Gemini detects rather than get a silent block
       // We handle the blocking ourselves based on the classification
