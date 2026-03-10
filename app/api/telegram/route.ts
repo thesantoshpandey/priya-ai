@@ -123,6 +123,57 @@ function detectLanguageFromScript(text: string): string | null {
   return null;
 }
 
+// ============================================
+// ROMANIZED LANGUAGE DETECTION
+// Catches Tamil/Telugu/Kannada/Bengali/Malayalam/Marathi
+// written in English script (e.g. "neenga solunga")
+// Only uses words EXCLUSIVE to that language — no Hindi overlap
+// ============================================
+function detectRomanizedLanguage(text: string): string | null {
+  const lower = text.toLowerCase();
+
+  const langPatterns: Record<string, { pattern: RegExp; minMatches: number }> = {
+    tamil: {
+      pattern: /\b(naan|neenga|irukku|iruku|pannunga|pannu|theriyum|theriyathu|purinjutha|purinjudhaa|sollunga|sollu|vaanga|ponga|romba|konjam|thaan|akka|pathi|padikka|padichi|machi|ennoda|unnoda|therinja|aagum|maatom|kudukka|venum|nandri|eppadi|edhukku|kandipa|aama|enna da|seri da|puriyala|vandhurukku|paarunga|kelunga|pesalam|padam|pannalam)\b/g,
+      minMatches: 2,
+    },
+    telugu: {
+      pattern: /\b(nenu|meeru|unnav|unnadu|undi|cheppandi|cheppu|teliyadu|artham aithe|ikkada|akkada|baaga|koncham|manchiga|emanna|chestha|cheyyi|chesaru|ippudu|appudu|vastundi|vellandi|ravandi|evaru|enduku|ledhu|chala|mari|inka|antey|ayya|garu|enti|emiti)\b/g,
+      minMatches: 2,
+    },
+    kannada: {
+      pattern: /\b(naanu|neevu|idu|illi|alli|helu|gottu|gottilla|yake|yelli|chennagi|swalpa|tumba|banni|hogi|maadi|agide|nanage|nimge|baruttini|kelsa|olle|heege|haage|nodri|helri|maadri|barri|hogri)\b/g,
+      minMatches: 2,
+    },
+    bengali: {
+      pattern: /\b(ami|tumi|apni|kemon ache|bolun|janina|ekhane|okhane|ektu|onek|bhalo|kothay|keno|korbo|korte|hobe|hoye|gache|jacche|ashche|bojho|bolchi|parbe|parbo|jigges|korechhi)\b/g,
+      minMatches: 2,
+    },
+    malayalam: {
+      pattern: /\b(njan|ningal|enthu|enth|undoo|parayoo|ariyam|ariyilla|evide|ivide|avide|kurachee|valare|chechi|chetta|mone|mole|enthaanu|enthina|venam|venda|shari|mathi|parayu|ariyumo|vannu|irikkunnu|poyyi)\b/g,
+      minMatches: 2,
+    },
+    marathi: {
+      pattern: /\b(aahe|tumhi|sanga|mahit|mahitay|kuthe|ithe|tithe|changla|khup|kaay|zala|zali|mhanje|aahet|karto|karun|baghto|sangu|aapla|aamhi|sangitla|milala|basla|gela|aali|kashala|bol na|sagla|theek aahe|naahi re)\b/g,
+      minMatches: 2,
+    },
+  };
+
+  let bestLang: string | null = null;
+  let bestCount = 0;
+
+  for (const [lang, config] of Object.entries(langPatterns)) {
+    const matches = lower.match(config.pattern);
+    const count = matches ? matches.length : 0;
+    if (count >= config.minMatches && count > bestCount) {
+      bestLang = lang;
+      bestCount = count;
+    }
+  }
+
+  return bestLang;
+}
+
 export async function POST(request: NextRequest) {
   try {
     const secretHeader = request.headers.get(
@@ -502,13 +553,30 @@ export async function POST(request: NextRequest) {
     }
 
     // ============================================
-    // AUTO LANGUAGE DETECTION (script-based)
+    // AUTO LANGUAGE DETECTION (script + romanized)
     // ============================================
     if (!user.preferred_language || user.preferred_language === "hinglish") {
-      const detected = detectLanguageFromScript(message.text);
+      // Try Unicode script detection first (strongest signal)
+      let detected = detectLanguageFromScript(message.text);
+      // If no native script found, try romanized word detection
+      if (!detected) {
+        detected = detectRomanizedLanguage(message.text);
+      }
       if (detected && detected !== "hinglish") {
+        console.log(`[LANG] Detected ${detected} for user ${user.telegram_username || user.id}`);
         await updateUserProfile(user.id, { preferred_language: detected });
         user.preferred_language = detected;
+      }
+    } else if (user.preferred_language !== "hinglish") {
+      // User already has a non-hinglish language set.
+      // Still check if they're writing in a DIFFERENT regional language (language switch)
+      const scriptLang = detectLanguageFromScript(message.text);
+      const romanLang = detectRomanizedLanguage(message.text);
+      const newLang = scriptLang || romanLang;
+      if (newLang && newLang !== user.preferred_language) {
+        console.log(`[LANG] Language switch: ${user.preferred_language} → ${newLang} for user ${user.telegram_username || user.id}`);
+        await updateUserProfile(user.id, { preferred_language: newLang });
+        user.preferred_language = newLang;
       }
     }
 

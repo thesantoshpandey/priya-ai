@@ -217,13 +217,18 @@ export async function generateResponse(
     });
   }
 
+  // Build language enforcement string for voice/image prompts
+  const langEnforce = userContext.preferred_language && userContext.preferred_language !== "hinglish"
+    ? `CRITICAL: This student's language is ${userContext.preferred_language.toUpperCase()}. You MUST respond in ${userContext.preferred_language}. Do NOT switch to Hindi, Marathi, Punjabi, or any other language. Stay in ${userContext.preferred_language} (mixed with English for scientific terms).`
+    : "RESPOND IN THE SAME LANGUAGE THE STUDENT HAS BEEN USING. Default to Hinglish if unclear.";
+
   currentParts.push({
     text: imageData
       ? userMessage === "[photo]"
-        ? "Student ne ye photo bheji hai. Agar ye koi NEET question, diagram, textbook page, or problem hai toh solve karo aur explain karo. Agar kuch aur hai toh naturally respond karo. RESPOND IN THE SAME LANGUAGE THE STUDENT HAS BEEN USING."
+        ? `Student ne ye photo bheji hai. Agar ye koi NEET question, diagram, textbook page, or problem hai toh solve karo aur explain karo. Agar kuch aur hai toh naturally respond karo. ${langEnforce}`
         : userMessage
       : audioBase64
-        ? "Student ne ye voice message bheja hai. Pehle sun ke samjho kya bol rahe hain, phir naturally respond karo jaise Priya karti hain. Agar NEET se related doubt hai toh solve karo. DETECT THEIR LANGUAGE AND RESPOND IN THE SAME LANGUAGE."
+        ? `Student ne ye voice message bheja hai. Pehle sun ke samjho kya bol rahe hain, phir naturally respond karo jaise Priya karti hain. Agar NEET se related doubt hai toh solve karo. ${langEnforce}`
         : userMessage,
   });
 
@@ -356,8 +361,10 @@ function buildContextualPrompt(ctx: UserContext): string {
     };
     const langDesc = langNames[ctx.preferred_language] || ctx.preferred_language;
     contextParts.push(
-      `LANGUAGE: This student prefers ${langDesc}. Respond in this language. ` +
-      `Keep scientific terms in English. Match their style of mixing.`
+      `LANGUAGE — STRICT RULE: This student communicates in ${langDesc}. ` +
+      `You MUST respond in ${ctx.preferred_language.toUpperCase()} every single time. ` +
+      `Do NOT switch to Hindi, Hinglish, Marathi, Punjabi, or ANY other language — even if the student sends a short English word like "ok" or "hi". ` +
+      `Keep scientific terms in English. Match their style of mixing ${ctx.preferred_language} and English.`
     );
   } else {
     contextParts.push(
