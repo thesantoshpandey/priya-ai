@@ -271,6 +271,17 @@ export async function POST(request: NextRequest) {
     }
 
     // ============================================
+    // BAN CHECK — BEFORE ANY MESSAGE PROCESSING
+    // ============================================
+    if (await isUserBanned(user.id)) {
+      await sendTelegramMessage(
+        message.chatId,
+        "Aapka account ban kar diya gaya hai inappropriate content ke liye. Support@priyaai.com pe contact karo."
+      );
+      return NextResponse.json({ ok: true });
+    }
+
+    // ============================================
     // NORMAL FLOW — EVERYONE GETS TO CHAT
     // ============================================
 
@@ -286,6 +297,60 @@ export async function POST(request: NextRequest) {
           const audioNodeBuffer = Buffer.from(audioBuffer);
           const base64Audio = audioNodeBuffer.toString("base64");
 
+          // ===== STEP 1: TRANSCRIBE FIRST (needed for moderation) =====
+          const transcription = await transcribeAudio(base64Audio);
+
+          // ===== STEP 2: MODERATE TRANSCRIPTION (same as text moderation) =====
+          let contentFlag = "clean";
+          let flaggedReason: string | undefined = undefined;
+
+          if (transcription && transcription.length > 0 && transcription !== "[unclear]" && transcription !== "[no speech]") {
+            const recentForMod = await getRecentHistory(user.id, 5);
+            const voiceModResult = await screenText(transcription, recentForMod);
+
+            if (voiceModResult.dominated) {
+              // Voice message flagged — apply strikes exactly like text
+              const currentStrikes = user.content_strikes || 0;
+              const newStrikes = currentStrikes + 1;
+              contentFlag = voiceModResult.category || "explicit";
+              flaggedReason = `Voice transcription: ${voiceModResult.reason}`;
+
+              // Store voice with flag before taking action
+              saveVoiceMessage(user.id, message.voiceFileId, audioNodeBuffer, {
+                duration: undefined,
+                fileSize: audioNodeBuffer.length,
+                mimeType: "audio/ogg",
+                transcription: transcription,
+                aiResponse: "[BLOCKED]",
+                contentFlag,
+                flaggedReason,
+              }).catch((err) => console.error("Voice storage error:", err));
+
+              if (newStrikes >= 3) {
+                await supabase.from("users").update({
+                  is_banned: true,
+                  banned_at: new Date().toISOString(),
+                  ban_reason: `Auto-ban: voice ${voiceModResult.category} — ${voiceModResult.reason}`,
+                  content_strikes: newStrikes,
+                }).eq("id", user.id);
+                await sendTelegramMessage(message.chatId, "Aapka account permanently ban kar diya gaya hai inappropriate voice messages ke liye.");
+                try { await logModeration(user.id, message.chatId, "voice_ban", { category: voiceModResult.category, reason: transcription.substring(0, 200), confidence: "high", action: "ban" }, { strike_count: newStrikes }); } catch (e) {}
+              } else if (newStrikes === 2) {
+                await supabase.from("users").update({ content_strikes: newStrikes }).eq("id", user.id);
+                await sendTelegramMessage(message.chatId, "⚠️ LAST WARNING — Voice mein bhi rules apply hote hain. Ek aur inappropriate voice message = permanent ban.");
+                try { await logModeration(user.id, message.chatId, "voice_warn_final", { category: voiceModResult.category, reason: transcription.substring(0, 200), confidence: "high", action: "warn_final" }, { strike_count: newStrikes }); } catch (e) {}
+              } else {
+                await supabase.from("users").update({ content_strikes: newStrikes }).eq("id", user.id);
+                await sendTelegramMessage(message.chatId, "⚠️ Ye voice message appropriate nahi hai. Priya AI sirf NEET preparation ke liye hai. Voice mein bhi rules follow karo.");
+                try { await logModeration(user.id, message.chatId, "voice_warn", { category: voiceModResult.category, reason: transcription.substring(0, 200), confidence: "high", action: "warn" }, { strike_count: newStrikes }); } catch (e) {}
+              }
+
+              await saveMessage(user.id, "user", `[voice message — BLOCKED: ${contentFlag}]`);
+              return NextResponse.json({ ok: true });
+            }
+          }
+
+          // ===== STEP 3: VOICE IS CLEAN — GENERATE RESPONSE =====
           const history = await getRecentHistory(user.id, 20);
 
           const { text: aiResponse, tokensUsed } =
@@ -306,33 +371,14 @@ export async function POST(request: NextRequest) {
               base64Audio
             );
 
-          // Save chat messages
-          await saveMessage(user.id, "user", "[voice message]");
+          // Save chat messages (save transcription as user message for better history)
+          await saveMessage(user.id, "user", transcription ? `[voice] ${transcription}` : "[voice message]");
           await saveMessage(user.id, "assistant", aiResponse, {
             tokens_used: tokensUsed,
             model_used: process.env.GEMINI_MODEL || "gemini-2.5-flash",
           });
 
-          // Transcribe audio in background (non-blocking for response speed)
-          const transcriptionPromise = transcribeAudio(base64Audio);
-
-          // Detect content flags from AI response
-          const lowerResponse = aiResponse.toLowerCase();
-          let contentFlag = "clean";
-          let flaggedReason: string | undefined = undefined;
-          if (
-            lowerResponse.includes("bakwas band") ||
-            lowerResponse.includes("aise nahi chalega") ||
-            lowerResponse.includes("aye! ye kya hai")
-          ) {
-            contentFlag = "inappropriate";
-            flaggedReason = "AI triggered content safety response";
-          }
-
-          // Wait for transcription (runs in parallel with content flag detection)
-          const transcription = await transcriptionPromise;
-
-          // Store voice message to data bank with transcription
+          // Store voice message to data bank
           saveVoiceMessage(user.id, message.voiceFileId, audioNodeBuffer, {
             duration: undefined,
             fileSize: audioNodeBuffer.length,
@@ -367,18 +413,6 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ ok: true });
       }
     }
-
-    // ============================================
-    // BAN CHECK
-    // ============================================
-    if (await isUserBanned(user.id)) {
-      await sendTelegramMessage(
-        message.chatId,
-        "Aapka account ban kar diya gaya hai inappropriate content ke liye. Support@priyaai.com pe contact karo."
-      );
-      return NextResponse.json({ ok: true });
-    }
-
 
     // ============================================
     // TEXT CONTENT MODERATION — Gemini contextual
