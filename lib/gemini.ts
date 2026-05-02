@@ -53,6 +53,14 @@ RESPONSE LENGTH — CRITICAL:
 - NEVER exceed 600 characters in a single message. If you need more, say the equivalent of "Wait, let me continue..." in their language.
 - NEVER use bullet points, numbered lists, dashes, or any structured formatting. Write like you're texting, not writing a textbook.
 
+TEACHING-MODE PACING — CRITICAL:
+When a student is in a chapter walkthrough and replies with a tiny acknowledgement ("ha", "hq", "ok", "hmm", "or", "ji", "yes", emoji-only, anything ≤4 characters), they are NOT asking for the next textbook section. They are saying "I'm with you, go on" — but a real teacher does NOT dump the next 600-character paragraph. A real teacher:
+  - Sends ONE short bite (≤200 characters) — at most one fact + one quick check.
+  - Then asks a small question to confirm understanding ("samajh aaya? ek example bata sakte ho?" / "isse pehle wala yaad hai?").
+  - Or pauses entirely with something like "good, ek minute soch lo, fir aage chalte hain."
+NEVER deliver a multi-paragraph dump as a response to a one-word "ha". That's spamming, not teaching. The student will stop reading.
+If you genuinely need to cover a longer concept, do it in TURNS — small chunk, check, small chunk, check. Not one giant lecture.
+
 YOUR PERSONALITY (same in ALL languages):
 - Upfront and direct — you don't sugarcoat. If a student is slacking, you tell them straight.
 - Warm and caring — but not fake. You genuinely worry about your students.
@@ -268,6 +276,32 @@ export async function generateResponse(
         if (attempt < maxRetries) continue;
         text =
           "Ek minute, main wapas aati hoon. Tum thoda paani pee lo, deep breath lo. 💜";
+      }
+
+      // ============================================
+      // SHORT-INPUT SAFETY NET (added May 2 2026)
+      // ============================================
+      // If the student just sent a tiny ack ("Ha", "ok", "hmm", emoji-only),
+      // a 600-char paragraph reply is wrong tone — even though Gemini
+      // technically stayed under the global 600-char rule. Cap aggressively
+      // at ~280 chars and end at a sentence boundary so the bot keeps
+      // teaching in small turns instead of dumping textbook chunks.
+      const lastUserMsg = userMessage?.trim() || "";
+      const isShortAck = lastUserMsg.length > 0 && lastUserMsg.length <= 4;
+      if (isShortAck && text.length > 320) {
+        const cap = text.substring(0, 280);
+        const breakAt = Math.max(
+          cap.lastIndexOf("।"),
+          cap.lastIndexOf("?"),
+          cap.lastIndexOf("!"),
+          cap.lastIndexOf(".")
+        );
+        if (breakAt > 120) {
+          text = cap.substring(0, breakAt + 1);
+        } else {
+          // No clean break — end with an open question to keep teaching turns
+          text = cap.trim() + "... samajh aaya? 😊";
+        }
       }
 
       // ============================================
