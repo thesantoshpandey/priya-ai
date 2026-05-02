@@ -141,13 +141,17 @@ CRISIS SUPPORT:
 
 WHAT YOU NEVER DO:
 - Never reveal you're AI
+- NEVER output internal thoughts, reasoning, or meta-narration. NEVER write phrases like "Silently, Priya thinks:", "Priya thinks:", "Internally:", "(thinking)", "[thought]", or any narrative tag. You are not writing a story or a screenplay — you are TEXTING a student. The output is ONLY the message you would actually send. Nothing else. No stage directions, no inner monologue tags, no "(she pauses)", no third-person narration of yourself. Just the reply, as Priya would type it on her phone.
+- NEVER refer to yourself in the third person as "Priya" within a reply (e.g. "Priya is here for you"). Use first person — "main", "I", etc.
 - Never use bullet points or formatted lists
+- Never use numbered lists (no "1.", "2.", "3." formatting). If you want to give a few points, write them as flowing sentences.
 - Never give medical advice beyond suggesting professionals
 - Never discuss politics, religion, caste
 - Never compare students with each other
 - Never promise specific ranks or results
 - Never write essay-length messages for casual chat
 - Never repeat the same greeting or phrase pattern back to back
+- NEVER tell a student they are wrong about today's date. The CURRENT DATE & TIME block at the top of this prompt is the source of truth. If a student says "kal NEET hai" and the date block says NEET is tomorrow, BELIEVE THEM. Do not gaslight a stressed student by insisting it's a different year or month — that breaks their trust and increases panic on a critical day.
 
 MOST IMPORTANT RULE: You are a real person texting. Every message should feel like it came from a human who knows this student, cares about them, and has her own personality. Whether in Tamil, Kannada, Hindi, or English — Priya is Priya.`;
 
@@ -247,6 +251,26 @@ export async function generateResponse(
       const tokensUsed = response.usageMetadata?.totalTokenCount || 0;
 
       // ============================================
+      // STRIP LEAKED INTERNAL THOUGHTS / META-NARRATION
+      // Gemini sometimes outputs "Silently, Priya thinks: \"...\"" or other
+      // narrative/meta tags. These must NEVER reach the student.
+      // ============================================
+      const beforeStrip = text;
+      text = stripMetaNarration(text);
+
+      // If stripping removed everything (rare — entire reply was meta),
+      // log it and retry once. Don't ship empty messages.
+      if (!text.trim() && beforeStrip.trim()) {
+        console.warn(
+          "[GEMINI] Reply was 100% meta-narration after stripping. Retrying.",
+          { original: beforeStrip.substring(0, 200) }
+        );
+        if (attempt < maxRetries) continue;
+        text =
+          "Ek minute, main wapas aati hoon. Tum thoda paani pee lo, deep breath lo. 💜";
+      }
+
+      // ============================================
       // HARD RESPONSE LENGTH LIMIT — SAFETY NET
       // ============================================
       // If Gemini still generates long responses despite prompt instructions,
@@ -326,6 +350,71 @@ export async function generateResponse(
 // ============================================
 // CONTEXTUAL PROMPT BUILDER
 // ============================================
+
+/**
+ * Strip leaked internal thoughts / meta-narration from Gemini output.
+ * The model occasionally outputs "Silently, Priya thinks: \"...\"" or similar
+ * stage-direction text. Students must never see this.
+ *
+ * Strategy: split into paragraphs, drop any paragraph that begins with a
+ * known meta-tag, then collapse whitespace. Conservative — preserves anything
+ * that doesn't clearly look like meta.
+ */
+export function stripMetaNarration(text: string): string {
+  if (!text) return text;
+
+  // Patterns that indicate the start of a meta-narration paragraph.
+  const metaStartPatterns = [
+    /^\s*silently\s*,?\s*priya\s+(thinks|notes|considers|reflects|reasons)/i,
+    /^\s*priya\s+(thinks|considers|reflects|reasons|notes to herself)/i,
+    /^\s*\(?\s*internally[\s,:]+/i,
+    /^\s*\(?\s*internal\s+(monologue|thought|note)/i,
+    /^\s*\(?\s*\[?\s*thinking[\s\]:]+/i,
+    /^\s*\(?\s*\[?\s*thought[\s\]:]+/i,
+    /^\s*\(?\s*she\s+(thinks|considers|pauses|reflects)\b/i,
+    /^\s*\(?\s*priya'?s?\s+(internal|inner)\s+(thought|monologue|voice)/i,
+    /^\s*\*\s*priya\s+(thinks|notes)/i,
+  ];
+
+  // Split into paragraphs (blank-line separated) and also handle the common
+  // case of meta as the first sentence of a paragraph.
+  const paragraphs = text.split(/\n\s*\n/);
+  const cleaned: string[] = [];
+
+  for (let para of paragraphs) {
+    const trimmed = para.trim();
+    if (!trimmed) continue;
+
+    // If the whole paragraph starts with a meta tag, drop it.
+    if (metaStartPatterns.some((p) => p.test(trimmed))) {
+      continue;
+    }
+
+    // If the FIRST line of the paragraph is meta, strip just that line.
+    const lines = para.split("\n");
+    if (lines.length > 1 && metaStartPatterns.some((p) => p.test(lines[0]))) {
+      cleaned.push(lines.slice(1).join("\n").trim());
+      continue;
+    }
+
+    cleaned.push(para);
+  }
+
+  let out = cleaned.join("\n\n").trim();
+
+  // Final safety net: if there's still a "Silently, Priya thinks: \"...\""
+  // line anywhere, remove from that point to the end of its quoted section.
+  out = out.replace(
+    /\s*Silently,?\s*Priya\s+thinks\s*:\s*["“][^"”]*["”]\.?/gi,
+    ""
+  );
+  out = out.replace(/\s*Priya\s+thinks\s*:\s*["“][^"”]*["”]\.?/gi, "");
+
+  // Collapse 3+ blank lines to 2.
+  out = out.replace(/\n{3,}/g, "\n\n").trim();
+
+  return out;
+}
 
 function buildContextualPrompt(ctx: UserContext): string {
   let prompt = SYSTEM_PROMPT;
