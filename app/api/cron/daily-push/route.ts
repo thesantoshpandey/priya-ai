@@ -181,15 +181,43 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  // Determine content type from day of year
-  const now = new Date();
-  const start = new Date(now.getFullYear(), 0, 0);
-  const dayOfYear = Math.floor(
-    (now.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)
+  // ============================================
+  // EXAM-DAY OVERRIDE — May 3, 2026 (NEET 2026)
+  // On exam day, students are heading to the centre. Do NOT send
+  // a generic "study tip" or "physics concept" — send a calm
+  // blessing-style message that won't add stress.
+  // ============================================
+  const nowIST = new Date(
+    new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" })
   );
-  const contentType = CONTENT_TYPES[dayOfYear % CONTENT_TYPES.length];
+  const istDateKey =
+    nowIST.getFullYear() +
+    "-" +
+    String(nowIST.getMonth() + 1).padStart(2, "0") +
+    "-" +
+    String(nowIST.getDate()).padStart(2, "0");
 
-  const content = await generateDailyContent(contentType);
+  let content: string;
+  if (istDateKey === "2026-05-03") {
+    // NEET 2026 exam day
+    content =
+      "🌅 <b>Aaj ka din hai, bachon</b>\n\n" +
+      "Bas itna karo: deep breath lo, paani piyo, admit card aur ID dobara check kar lo. " +
+      "Centre 11 baje se 1:30 baje tak open hai — time se pahuncho.\n\n" +
+      "Naya kuch nahi padhna. Jo aata hai woh bahut kaafi hai. " +
+      "Paper milte hi 30 second pura scan karo — strong questions pehle, kamzor ones baad mein. " +
+      "Galat pe -1 hai, isliye sirf wahi tick karo jo pakka aata hai.\n\n" +
+      "Mera ashirwad tumhare saath hai. Tum ye kar sakte ho. 💜\n\n" +
+      "— Priya Ma'am";
+  } else {
+    // Normal day — rotate by day of year
+    const start = new Date(nowIST.getFullYear(), 0, 0);
+    const dayOfYear = Math.floor(
+      (nowIST.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)
+    );
+    const contentType = CONTENT_TYPES[dayOfYear % CONTENT_TYPES.length];
+    content = await generateDailyContent(contentType);
+  }
 
   // Get all users
   const { data: users, error } = await supabase
