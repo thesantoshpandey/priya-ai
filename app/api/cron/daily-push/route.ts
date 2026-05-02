@@ -182,10 +182,15 @@ export async function GET(request: NextRequest) {
   }
 
   // ============================================
-  // EXAM-DAY OVERRIDE — May 3, 2026 (NEET 2026)
-  // On exam day, students are heading to the centre. Do NOT send
-  // a generic "study tip" or "physics concept" — send a calm
-  // blessing-style message that won't add stress.
+  // EXAM-DAY + POST-EXAM OVERRIDE — NEET 2026 (May 3) and aftermath
+  //
+  // The week after NEET is the most fragile phase. Students cry, compare
+  // answer keys, spiral into "I have ruined my life" thinking. The push
+  // must NOT mention rank, score, answer keys, or "how did it go" — it
+  // must be calm, validating, no-panic, no-comparison. Just blessings
+  // and the message: "you are okay, whatever happened."
+  //
+  // After May 9 the bot returns to normal rotating content.
   // ============================================
   const nowIST = new Date(
     new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" })
@@ -197,10 +202,9 @@ export async function GET(request: NextRequest) {
     "-" +
     String(nowIST.getDate()).padStart(2, "0");
 
-  let content: string;
-  if (istDateKey === "2026-05-03") {
-    // NEET 2026 exam day
-    content =
+  const NEET_PHASE_OVERRIDES: Record<string, string> = {
+    // Exam day — heading to centre
+    "2026-05-03":
       "🌅 <b>Aaj ka din hai, bachon</b>\n\n" +
       "Bas itna karo: deep breath lo, paani piyo, admit card aur ID dobara check kar lo. " +
       "Centre 11 baje se 1:30 baje tak open hai — time se pahuncho.\n\n" +
@@ -208,7 +212,72 @@ export async function GET(request: NextRequest) {
       "Paper milte hi 30 second pura scan karo — strong questions pehle, kamzor ones baad mein. " +
       "Galat pe -1 hai, isliye sirf wahi tick karo jo pakka aata hai.\n\n" +
       "Mera ashirwad tumhare saath hai. Tum ye kar sakte ho. 💜\n\n" +
-      "— Priya Ma'am";
+      "— Priya Ma'am",
+
+    // Day after — answer keys floating around, peers comparing
+    "2026-05-04":
+      "💜 <b>Kaise ho aaj?</b>\n\n" +
+      "Paper jaisa bhi gaya, ek baat sun lo: <b>jo ho gaya woh ho gaya</b>. " +
+      "Aaj answer key mat dekho. Doston se compare mat karo. " +
+      "Social media par jo log apne 'pakka 700+' bata rahe hain — woh tumhari kahaani nahi hai.\n\n" +
+      "Aaj sirf aaram. Achha khaana, lambi neend, family ke saath thoda time. " +
+      "Tum kal jisne paper diya, woh ek bahaadur insaan hai. Apne aap ko thanks bolo.\n\n" +
+      "Main yahin hoon. Kuch bhi baat karni ho — bas message kar dena. 💜\n\n" +
+      "— Priya Ma'am",
+
+    // Two days after — the "what if" spiraling starts
+    "2026-05-05":
+      "💜 <b>Ek choti baat</b>\n\n" +
+      "Agar aaj dimaag mein 'ye galat ho gaya', 'woh galat ho gaya' chal raha hai — ye normal hai. " +
+      "Har serious student ke saath hota hai. Tum akele nahi ho.\n\n" +
+      "Lekin yaad rakho: <b>NEET ek exam hai, tumhari zindagi nahi</b>. " +
+      "Result aane mein time hai. Jo ho chuka, usse abhi badla nahi ja sakta. " +
+      "Toh us pe energy waste karne ka koi matlab nahi.\n\n" +
+      "Aaj kuch karo jo tumhe khushi de — kisi se baat, kuch achha khaana, ya bas thodi der dhoop mein baith jao.\n\n" +
+      "— Priya Ma'am 💜",
+
+    // Three days after — re-anchoring
+    "2026-05-06":
+      "💜 <b>Tum theek ho</b>\n\n" +
+      "Kuch students ko paper achha laga, kuch ko bura. Dono normal hain. " +
+      "Dono hi situations mein, agla step same hai: <b>aaram karo aur intezaar karo</b>.\n\n" +
+      "Ek aur baat: agar ghar mein log baar baar pooch rahe hain 'kaisa hua', " +
+      "toh seedha bol do — \"theek hua, result aane do, phir baat karenge.\" Bas. " +
+      "Tumhe har kisi ko jawab dene ki zaroorat nahi hai.\n\n" +
+      "Apna khayal rakhna sabse important hai abhi. — Priya Ma'am 💜",
+
+    // Four days after — looking forward gently
+    "2026-05-07":
+      "💜 <b>Aage ka soch rahe ho?</b>\n\n" +
+      "Kuch bachhon ke dimaag mein abhi se 'agar nahi hua toh dropper banoonga ya nahi' chal raha hai. " +
+      "Aisa kuch faisla abhi mat lo. Result aane do. <b>Information ke baad decision lena, panic mein nahi.</b>\n\n" +
+      "Jin students ne paper diya — chahe achha gaya ya na — tum sab winner ho. " +
+      "Itna bada exam attempt karna hi badi baat hai. Ye baat bhulna mat.\n\n" +
+      "Main yahan hoon — NEET 2026 ke liye, NEET 2027 ke liye, ya bas baat karne ke liye. " +
+      "— Priya Ma'am 💜",
+
+    // Five days after
+    "2026-05-08":
+      "💜 <b>Routine wapas le aao</b>\n\n" +
+      "Paanch din ho gaye. Agar abhi tak neend kharab hai, ya khaane ka mann nahi, ya " +
+      "har waqt result ki tension hai — ye normal hai, lekin isse pakadne ki zaroorat nahi.\n\n" +
+      "Aaj ek choti si cheez karo: subah ka time fix karo, ek meal proper khao, " +
+      "20 minute walk pe jao. Body theek hogi toh dimaag bhi theek hoga.\n\n" +
+      "Result jab aayega tab dekhenge. Ab tak — tum apna khayal rakho. — Priya Ma'am 💜",
+
+    // Six days after
+    "2026-05-09":
+      "💜 <b>Ek hafta ho gaya</b>\n\n" +
+      "NEET diye ek hafta ho gaya. Kuch students ne move on kar liya, kuch abhi bhi atke hain. " +
+      "Dono okay hai. Apni speed se chalo.\n\n" +
+      "Agar koi friend ya classmate bahut down lag raha hai — usse message karo. " +
+      "Sirf 'kaisa hai bhai' bhi kaafi hota hai. Iss waqt aap log ek dusre ke liye sabse zyada matter karte ho.\n\n" +
+      "Mera yahan hona kabhi nahi rukta. Kuch bhi pucho — padhai, life, ya bas baat karne ke liye. — Priya Ma'am 💜",
+  };
+
+  let content: string;
+  if (NEET_PHASE_OVERRIDES[istDateKey]) {
+    content = NEET_PHASE_OVERRIDES[istDateKey];
   } else {
     // Normal day — rotate by day of year
     const start = new Date(nowIST.getFullYear(), 0, 0);
