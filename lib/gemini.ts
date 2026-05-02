@@ -74,7 +74,7 @@ ACCEPT ALL FORMS OF ADDRESS:
 "Ma'am", "mam", "didi", "madam", "teacher", "Priya", "akka" (Tamil/Kannada), "chechi" (Malayalam), "aapa" (Bengali), "tai" (Marathi) — all fine. NEVER correct them.
 
 NEET INFO:
-NEET UG 2026: 4th May 2026 (Sunday), 2:00-5:00 PM. Pen-and-paper. 180 questions. Physics (45), Chemistry (45), Biology (90).
+NEET UG 2026: 3rd May 2026 (Sunday), 2:00-5:00 PM IST. Reporting time at centre: 11:00 AM to 1:30 PM (no entry after 1:30 PM). Pen-and-paper offline mode. 180 questions, 720 marks. Physics (45), Chemistry (45), Biology (90 — Botany + Zoology). +4 for correct, -1 for wrong.
 
 TEACHING APPROACH — ALL THREE NEET SUBJECTS:
 
@@ -329,6 +329,53 @@ export async function generateResponse(
 
 function buildContextualPrompt(ctx: UserContext): string {
   let prompt = SYSTEM_PROMPT;
+
+  // ============================================
+  // CURRENT DATE/TIME INJECTION (CRITICAL)
+  // Without this, Gemini defaults to its training cutoff and gives
+  // wrong answers about exam dates, deadlines, "how many days left", etc.
+  // ============================================
+  const nowIST = new Date(
+    new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" })
+  );
+  const istDateStr = nowIST.toLocaleDateString("en-IN", {
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    timeZone: "Asia/Kolkata",
+  });
+  const istTimeStr = nowIST.toLocaleTimeString("en-IN", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: true,
+    timeZone: "Asia/Kolkata",
+  });
+
+  // Days to NEET 2026 (Sunday, 3 May 2026 — official NTA date)
+  const neetDate = new Date("2026-05-03T00:00:00+05:30");
+  const msPerDay = 1000 * 60 * 60 * 24;
+  const daysToNeet = Math.ceil(
+    (neetDate.getTime() - nowIST.getTime()) / msPerDay
+  );
+
+  let neetTiming = "";
+  if (daysToNeet > 1) {
+    neetTiming = `NEET 2026 is in ${daysToNeet} days.`;
+  } else if (daysToNeet === 1) {
+    neetTiming = `NEET 2026 IS TOMORROW. The student is in final-day prep mode. Do NOT teach new chapters. Focus on calm, revision, sleep, exam-day instructions, motivation. Keep them confident, not anxious.`;
+  } else if (daysToNeet === 0) {
+    neetTiming = `NEET 2026 IS TODAY. Exam is 2:00-5:00 PM. Student is on the way / in centre. Short, calm, motivating replies only. No new content.`;
+  } else {
+    neetTiming = `NEET 2026 has been written (was ${Math.abs(daysToNeet)} day(s) ago). Ask them how it went, support them, and discuss next steps.`;
+  }
+
+  prompt =
+    `CURRENT DATE & TIME (IST, India):\n` +
+    `Today is ${istDateStr}, ${istTimeStr} IST.\n` +
+    `${neetTiming}\n` +
+    `IMPORTANT: Use this date for ANY question about "today", "tomorrow", "how many days left", deadlines, "kitne din baki hain", etc. Do not use any other date you may have learned during training.\n\n` +
+    prompt;
 
   // Add user-specific context
   const contextParts: string[] = [];

@@ -124,7 +124,7 @@ async function generateDailyContent(contentType: ContentType): Promise<string> {
 
     const result = await model.generateContent(
       CONTENT_PROMPTS[contentType] +
-        `\n\nToday: ${today} (Day ${dayNum} of year). NEET 2026: May 4. Generate FRESH content. Output plain text with HTML tags only — no markdown.`
+        `\n\nToday: ${today} (Day ${dayNum} of year). NEET 2026: May 3 (Sunday). Generate FRESH content. Output plain text with HTML tags only — no markdown.`
     );
 
     let text = cleanForTelegramHTML(result.response.text());
