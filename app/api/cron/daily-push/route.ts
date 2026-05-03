@@ -276,15 +276,17 @@ export async function GET(request: NextRequest) {
   };
 
   let content: string;
+  let contentType: string;
   if (NEET_PHASE_OVERRIDES[istDateKey]) {
     content = NEET_PHASE_OVERRIDES[istDateKey];
+    contentType = "neet_phase_override";
   } else {
     // Normal day — rotate by day of year
     const start = new Date(nowIST.getFullYear(), 0, 0);
     const dayOfYear = Math.floor(
       (nowIST.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)
     );
-    const contentType = CONTENT_TYPES[dayOfYear % CONTENT_TYPES.length];
+    contentType = CONTENT_TYPES[dayOfYear % CONTENT_TYPES.length];
     content = await generateDailyContent(contentType);
   }
 
