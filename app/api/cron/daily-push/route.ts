@@ -276,7 +276,7 @@ export async function GET(request: NextRequest) {
   };
 
   let content: string;
-  let contentType: string;
+  let contentType: ContentType | "neet_phase_override";
   if (NEET_PHASE_OVERRIDES[istDateKey]) {
     content = NEET_PHASE_OVERRIDES[istDateKey];
     contentType = "neet_phase_override";
@@ -286,8 +286,9 @@ export async function GET(request: NextRequest) {
     const dayOfYear = Math.floor(
       (nowIST.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)
     );
-    contentType = CONTENT_TYPES[dayOfYear % CONTENT_TYPES.length];
-    content = await generateDailyContent(contentType);
+    const rotated = CONTENT_TYPES[dayOfYear % CONTENT_TYPES.length];
+    contentType = rotated;
+    content = await generateDailyContent(rotated);
   }
 
   // Get all users
