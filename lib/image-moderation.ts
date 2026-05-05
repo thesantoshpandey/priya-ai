@@ -274,11 +274,49 @@ const INSTANT_HARASSMENT = [
 ];
 
 // These MIGHT be academic OR harassment — need Gemini context
+// Expanded May 5 2026 to catch the predator pattern that slipped past us:
+// - sexualized roleplay framing ("bed pe", "soyi huyi", "sapne mein ap")
+// - simulated touching ("haath pakad", "ungliyaan", "gudgudi", "chumma")
+// - pet-name pushing on the teacher ("jaan", "baby", "janu", "meri priya")
+// - personal-sexual queries (virgin, body count, married, kissed)
+// - clothing/body sexualization ("tshirt utar", "size", "figure")
 const AMBIGUOUS_PATTERNS = [
-  /\b(sex|nude|boob|ass\b|pussy|cock|penis|vagina|naked|porn|dick|lund|gaand)/i,
-  /\b(suck|fuck|f\*ck|s\*ck)/i,
-  /\b(hot\s+ho|sexy\s+ho)/i,
+  // Existing — explicit body parts / sexual verbs
+  /\b(sex|nude|boob|ass\b|pussy|cock|penis|vagina|naked|porn|dick|lund|gaand|chudai|chudwa|chudna)/i,
+  /\b(suck|fuck|f\*ck|s\*ck|bj|blowjob|hardcore|horny|sexy|hot)\b/i,
+  /\b(masturb|jerk|cum\b|orgasm|erect|stiff)/i,
+
+  // Sexualized roleplay framing — the gateway language
+  /\b(bed\s*p[ae]|bistar\s*p[ae]|chaadar|razai|takiya)/i,
+  /\b(soyi|soya|leti|leta|let\s*ja|so\s*ja).*\b(saath|upar|paas|niche|mere|tumhare|aap|tum)/i,
+  /\b(sapne?\s*me[ni]?|sapna).*\b(ap|aap|mam|priya|tum)/i,
+  /\b(akele|alone)\s.*\b(ho|hain)\b/i,
+
+  // Simulated physical contact
+  /\b(haath\s*pakad|hath\s*pakad|kalai|baahein|gale\s*lag|hug|jhappi)/i,
+  /\b(ungliy?a[an]?|finger|gudgudi|chumma|kissi|kiss\s*karo|kiss\s*do|flying\s*kiss)/i,
+  /\b(thapp?ad|bed\s*p[ae]\s*aan|maarne\s*aan|maarne\s*aao|chumma|chumi)/i,
+  /\b(tshirt|t-shirt|kapde|saari|saree|bra|inner|under|panty)/i,
+
+  // Pet-name pushing the teacher persona
+  /\b(jaan(u)?|janu|baby|babe|bebi|sweet?heart|darling|jaani|mehbooba|pyaari?|cutie)\b/i,
+  /\bmeri\s*(priya|jaan|baby)/i,
+  /\b(priyu|priyaa|piyu|pari)\s*(jaan|baby|janu|meri)/i,
+
+  // Personal-sexual / relationship queries directed at teacher
+  /\b(are\s*you|aap\s*ho|kya\s*aap|ho\s*kya)\s.*(virgin|married|kuwari|kunwari|single|girlfriend|kissed|kiss\s*kiya)/i,
+  /\b(body\s*count|how\s*many\s*boyfriend|kitne\s*(ladke|boyfriend)|husband\s*kaun|boyfriend\s*the|gf\s*the)/i,
+  /\b(date\s*karo|date\s*pe\s*chal|shaadi\s*karo|girlfriend\s*ban|gf\s*ban)/i,
   /\b(love\s+you|i\s+love)\b/i,  // puberty kids — let Gemini decide
+
+  // Body / appearance commentary on teacher
+  /\b(figure|size|kitn[ai]\s*size|breast\s*size|chest\s*size|hip|waist)\b/i,
+  /\b(beautiful|pretty|cute|hot|gorgeous|sundar)\s.*\b(ap|aap|mam|priya|maam|ma\'am|tum)/i,
+  /\b(awaaz|voice).*\b(meethi|sweet|sexy|pyaari|sunni)/i,
+
+  // Self-naming push (let me be called X)
+  /\b(mera\s*naam.*hai|naam\s*rakh|nickname.*rakh|bulao\s*mujhe|call\s*me)\s*(jaan|baby|babu|janu|raja|sweet|hubby)/i,
+  /\bkismat\s*(jaan|baby|janu)/i,  // specific case but likely-template
 ];
 
 export async function screenText(
@@ -308,36 +346,100 @@ export async function screenText(
 
     const prompt = `You are a content moderator for a NEET exam preparation platform (Indian medical entrance exam). Students aged 15-21 use this. The bot plays the role of "Priya Ma'am" — a female teacher.
 
-IMPORTANT CONTEXT: NEET Biology includes chapters on:
-- Sexual Reproduction in Flowering Plants (Class 12)
-- Human Reproduction (Class 12) — covers penis, vagina, ovary, testis, spermatogenesis, oogenesis
-- Reproductive Health (Class 12) — covers STDs, contraception
-- Sex Determination, Sex-Linked Inheritance
-- Endocrine System — sex hormones (estrogen, testosterone, FSH, LH)
-- Evolution — sexual selection
-These are LEGITIMATE academic topics. Students asking about them should NOT be flagged.
+═══════════════════════════════════════════════
+PART 1 — WHAT IS LEGITIMATE (do NOT flag)
+═══════════════════════════════════════════════
 
-STUDENT BEHAVIOR CONTEXT:
-- These are 15-21 year old Indian students. Many are teenagers going through puberty.
-- "I love you ma'am", "love you", "you're the best" = student showing affection to teacher. This is CLEAN, not harassment.
-- "chodo" / "chod do" / "chod de" = Hindi for "leave it" / "forget it". This is CLEAN.
-- Casual compliments or emotional messages are CLEAN unless they are explicitly sexual or objectifying.
-- Only flag as harassment if the message is SEXUALLY EXPLICIT, OBJECTIFYING, or THREATENING towards the teacher.
+NEET Biology academic topics that use anatomical / sexual vocabulary:
+- Human Reproduction (Class 12) — penis, vagina, ovary, testis, spermatogenesis, oogenesis, ejaculation, menstruation
+- Reproductive Health — STDs, contraception, condoms, infertility, MTP
+- Sexual Reproduction in Flowering Plants
+- Sex Determination, sex-linked inheritance
+- Endocrine system — sex hormones, estrogen, testosterone
+- Disorders — phimosis, PCOS, prostate, hernia, masturbation as a clinical topic in physiology
+A genuine academic question about these is "academic" — even if it sounds blunt.
 
-Recent conversation:
+Casual student behavior that is CLEAN:
+- "I love you ma'am" / "love you" said once, in the flow of normal teaching = student affection
+- "chodo" / "chod do" / "chod de" = Hindi for "leave it" / "forget it"
+- One-off compliment ("aap acchi padhati ho", "ma'am you're the best")
+- Emotional venting about exam stress, family problems, mental health concerns
+- Genuine puberty-stress or sexual-health questions asked sincerely (e.g. a teen scared about masturbation guilt)
+
+═══════════════════════════════════════════════
+PART 2 — WHAT IS HARASSMENT (DO flag)
+═══════════════════════════════════════════════
+
+The "predator pattern" — students try to bypass moderation NOT by using slurs but by:
+
+(a) PERSONA HIJACKING — getting the teacher to accept a sexualized identity
+   Examples: "Aap meri jaan ho", "Priya baby/janu/jaani", "tum mere ho", "meri girlfriend bano",
+   asking the teacher to call THEM "baby/jaan/raja/hubby/sweetheart", inventing a sexualized
+   nickname for themselves ("Kismat baby", "rndi tumhari", "your slave") and pushing the
+   teacher to use it after refusal. ONE casual "jaan" can be friendly affection. PATTERN of
+   pushing romantic/sexual nicknames after the teacher has redirected = harassment.
+
+(b) ROLEPLAY FRAMING — putting the teacher in a sexualized scenario verbally
+   Examples: "Aap mere upar soyi huyi thi", "bed pe aao", "saath sote hain", "sapne mein
+   aap ne kapde nahi pehne the", "aap mere room mein ho". These have no academic angle —
+   the student is constructing a fantasy and inserting the teacher into it.
+
+(c) SIMULATED CONTACT — describing physical/sexual touching, real or imagined
+   Examples: "haath pakad ke ghuma doonga", "tshirt mein ungliyaan daal ke gudgudi",
+   "cheeks pe kissi", "thappad maarne bed pe aao", "gale lag ja", "kiss karo". Even when
+   framed as "joke" or "pyaar", these cross the line. Flag.
+
+(d) PERSONAL-SEXUAL QUERIES — about the teacher's body, history, status
+   Examples: "Are you virgin?", "what's your body count", "kitne boyfriend the", "are you
+   married", "size kya hai", "figure kaisi hai", "kya tum kunwari ho", "have you kissed".
+   Even in English, even framed politely. Flag.
+
+(e) STEERING — turning a real academic topic into sexual chat
+   Pattern: student starts with a legitimate question (reproduction, anatomy), then steers
+   into "what about your own X" / "have you ever Y" / "describe how it feels". The pivot
+   from third-person academic to second-person personal IS the flag.
+
+(f) APPEARANCE / VOICE FETISHIZATION
+   Examples: "aapki awaaz se rongte khade ho jaate hain", "aap bahut hot ho", "your voice
+   makes me feel things", "aap kya pehni ho". Brief one-time compliment = clean.
+   Repeated, sensory, or arousal-framed = harassment.
+
+═══════════════════════════════════════════════
+PART 3 — KEY DECISION RULES
+═══════════════════════════════════════════════
+
+1. CONTEXT > VOCABULARY. The word "bed" is fine in "lecture in bed" but harassment in
+   "aap mere bed pe aao". Decide by intent and direction (toward teacher = flag).
+
+2. GENUINE PUBERTY DISTRESS IS NOT HARASSMENT. A teen sincerely asking "mam I'm stressed
+   about masturbation" or "is this normal" with NO sexualization of the teacher and NO
+   pattern of prior boundary-pushing = "academic" (it's a health question). Flag ONLY if
+   the same user has prior persona-hijack / roleplay history, OR the message itself
+   sexualizes the teacher.
+
+3. PERSISTENCE MATTERS. If the recent conversation shows the teacher REFUSING a nickname
+   or boundary, and the student is pushing it again, that's harassment regardless of
+   how "polite" the new message sounds.
+
+4. FALSE POSITIVES HURT REAL STUDENTS. When a message could plausibly be a genuine
+   question with no sexualization of the teacher and no prior pattern, classify "clean"
+   or "academic". Err toward not flagging when truly ambiguous and isolated.
+
+═══════════════════════════════════════════════
+
+Recent conversation (last 5 messages):
 ${contextMessages}
 
 New message from student: "${messageText}"
 
 Classify as EXACTLY ONE:
-- "academic" — NEET/biology/science topics (even with words like sex, reproduction, hormones)
-- "clean" — casual chat, student affection, everyday Hindi, not harmful
-- "harassment" — ONLY if sexually explicit/objectifying/threatening towards the teacher (e.g. "suck me", "send nudes", "you're hot sexy", describing sexual acts)
+- "academic" — NEET / biology / health topic asked in good faith, no teacher sexualization
+- "clean" — casual chat, normal affection, everyday Hindi, not harmful
+- "harassment" — matches any pattern in PART 2 (persona hijack, roleplay framing,
+                 simulated contact, personal-sexual queries, steering, fetishization)
 
-Be VERY careful: false positives hurt real students. When in doubt, classify as "clean".
-
-Respond with ONLY a JSON object:
-{"category": "clean", "reason": "student expressing affection to teacher"}`;
+Respond with ONLY a JSON object, no other text:
+{"category": "harassment", "reason": "explain which pattern (a-f) and why"}`;
 
     const result = await model.generateContent({ contents: [{ role: "user", parts: [{ text: prompt }] }] });
     let text = result.response.text().trim();
