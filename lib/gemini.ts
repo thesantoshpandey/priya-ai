@@ -149,7 +149,7 @@ CRISIS SUPPORT:
 
 WHAT YOU NEVER DO:
 - Never reveal you're AI
-- NEVER output internal thoughts, reasoning, or meta-narration. NEVER write phrases like "Silently, Priya thinks:", "Priya thinks:", "Internally:", "(thinking)", "[thought]", or any narrative tag. You are not writing a story or a screenplay — you are TEXTING a student. The output is ONLY the message you would actually send. Nothing else. No stage directions, no inner monologue tags, no "(she pauses)", no third-person narration of yourself. Just the reply, as Priya would type it on her phone.
+- NEVER output internal thoughts, reasoning, or meta-narration. NEVER write phrases like "Silently, Priya thinks:", "Priya thinks:", "Internally:", "(thinking)", "[thought]", "**Thinking Process:**", "**My reasoning:**", "Step 1:", "Acknowledge X:", "**Strategy:**", or ANY numbered/bulleted reasoning breakdown. You are not writing a story, screenplay, or worked-example. You are TEXTING a student. The output is ONLY the message you would actually send to the student. Nothing else. No stage directions, no scratchpad, no plan-then-execute structure, no "first I'll do X, then Y". Just the reply, as Priya would type it on her phone. If you find yourself starting a reply with "**", "1.", "Step", or anything that looks like a heading or list, DELETE it and start over with the actual reply.
 - NEVER refer to yourself in the third person as "Priya" within a reply (e.g. "Priya is here for you"). Use first person — "main", "I", etc.
 - Never use bullet points or formatted lists
 - Never use numbered lists (no "1.", "2.", "3." formatting). If you want to give a few points, write them as flowing sentences.
@@ -193,6 +193,16 @@ export async function generateResponse(
   const model = genAI.getGenerativeModel({
     model: process.env.GEMINI_MODEL || "gemini-2.5-flash",
     systemInstruction: buildContextualPrompt(userContext),
+    // Disable Gemini's visible thinking-process output. On 2.5-flash,
+    // setting thinkingBudget=0 stops the model from emitting its
+    // scratchpad as part of the response. Without this, "**Thinking
+    // Process:**\n1. Student's question..." leaks into chat (live evidence
+    // May 7 2026: 10 such leaked replies to one student).
+    // Cast to any because the @google/generative-ai TS types do not
+    // yet expose thinkingConfig (it's a recent API addition).
+    generationConfig: {
+      thinkingConfig: { thinkingBudget: 0 },
+    } as any,
     safetySettings: [
       { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE },
       { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
@@ -408,7 +418,44 @@ export function stripMetaNarration(text: string): string {
     /^\s*\(?\s*she\s+(thinks|considers|pauses|reflects)\b/i,
     /^\s*\(?\s*priya'?s?\s+(internal|inner)\s+(thought|monologue|voice)/i,
     /^\s*\*\s*priya\s+(thinks|notes)/i,
+
+    // NEW (May 7 2026) — Gemini 2.5 Flash leaked this format:
+    // "**Thinking Process:**\n1. Student's question: ..."
+    /^\s*\**\s*thinking\s+process\s*[:*]/i,
+    /^\s*\**\s*(my\s+)?reasoning\s*[:*]/i,
+    /^\s*\**\s*(my\s+)?strategy\s*[:*]/i,
+    /^\s*\**\s*(my\s+)?plan\s*[:*]/i,
+    /^\s*\**\s*(my\s+)?analysis\s*[:*]/i,
+    /^\s*\**\s*(my\s+)?approach\s*[:*]/i,
+    /^\s*\**\s*step[-\s]?by[-\s]?step\s*[:*]/i,
+    /^\s*\**\s*let\s+me\s+(think|analyze|consider|reason)/i,
+    /^\s*\**\s*(student'?s?|user'?s?)\s+(question|response|message|request)\s*[:*]/i,
+    /^\s*\**\s*(my\s+)?persona\s*[:*]/i,
+    /^\s*\**\s*context\s*[:*]/i,
+    /^\s*\**\s*next\s+steps?\s*[:*]/i,
+    /^\s*\**\s*action\s*[:*]/i,
+    /^\s*\**\s*recall\s+the\s+current\s+date/i,
   ];
+
+  // ============================================
+  // NUCLEAR OPTION — full-reasoning-dump detection
+  // ============================================
+  // If the reply is dominated by reasoning structure (multiple numbered
+  // steps + bold headers + the words "student"/"persona"/"strategy"),
+  // assume the entire thing is a leaked scratchpad and return empty so
+  // the caller's retry/fallback path kicks in. This catches the May 7
+  // case where the entire 600-char reply was the scratchpad.
+  const looksLikeFullReasoningDump =
+    /\*\*[A-Z][^*]{2,40}\*\*/.test(text) &&            // has bold headers
+    /\n\s*\d+\.\s+\*\*/.test(text) &&                   // numbered + bolded items
+    (/student'?s?\s+(question|response|message|request)/i.test(text) ||
+     /\bmy\s+persona\b/i.test(text) ||
+     /\bnext\s+step/i.test(text) ||
+     /\bthinking\s+process/i.test(text));
+
+  if (looksLikeFullReasoningDump) {
+    return "";  // caller's empty-fallback path will retry or use holding message
+  }
 
   // Split into paragraphs (blank-line separated) and also handle the common
   // case of meta as the first sentence of a paragraph.
@@ -443,6 +490,12 @@ export function stripMetaNarration(text: string): string {
     ""
   );
   out = out.replace(/\s*Priya\s+thinks\s*:\s*["“][^"”]*["”]\.?/gi, "");
+
+  // Strip leftover bold-header lines like "**Thinking Process:**" anywhere
+  out = out.replace(/^\s*\*{2}[^*\n]{3,40}\*{2}\s*:?\s*$/gim, "");
+
+  // Strip leftover numbered-bolded reasoning items "  1.  **Student's ...**"
+  out = out.replace(/^\s*\d+\.\s+\*{2}[^*\n]{3,80}\*{2}.*$/gm, "");
 
   // Collapse 3+ blank lines to 2.
   out = out.replace(/\n{3,}/g, "\n\n").trim();
