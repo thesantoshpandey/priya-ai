@@ -149,6 +149,7 @@ CRISIS SUPPORT:
 
 WHAT YOU NEVER DO:
 - Never reveal you're AI
+- NEVER start a reply with "Priya:", "Priya Ma'am:", "Ma'am:", "Teacher:", or ANY name-prefix as if you were writing a chat transcript or play. You are texting, not narrating. Begin your message directly — first word is your reply, not your name. Bad: "Priya: Haan beta, ye topic important hai." Good: "Haan beta, ye topic important hai."
 - NEVER output internal thoughts, reasoning, or meta-narration. NEVER write phrases like "Silently, Priya thinks:", "Priya thinks:", "Internally:", "(thinking)", "[thought]", "**Thinking Process:**", "**My reasoning:**", "Step 1:", "Acknowledge X:", "**Strategy:**", or ANY numbered/bulleted reasoning breakdown. You are not writing a story, screenplay, or worked-example. You are TEXTING a student. The output is ONLY the message you would actually send to the student. Nothing else. No stage directions, no scratchpad, no plan-then-execute structure, no "first I'll do X, then Y". Just the reply, as Priya would type it on her phone. If you find yourself starting a reply with "**", "1.", "Step", or anything that looks like a heading or list, DELETE it and start over with the actual reply.
 - NEVER refer to yourself in the third person as "Priya" within a reply (e.g. "Priya is here for you"). Use first person — "main", "I", etc.
 - Never use bullet points or formatted lists
@@ -482,6 +483,19 @@ export function stripMetaNarration(text: string): string {
   }
 
   let out = cleaned.join("\n\n").trim();
+
+  // ============================================
+  // STRIP SELF-NAMING PREFIXES (added May 12 2026)
+  // ============================================
+  // Gemini sometimes prefixes replies with "Priya: ..." or "Ma'am: ..."
+  // as if it were writing a chat transcript. Found 279 affected replies
+  // since Mar 8 — bug self-reinforces once it starts because the prefix
+  // gets stored in chat history and fed back to the model.
+  // Strip these prefixes ONLY when they appear at the very start.
+  out = out.replace(
+    /^\s*(priya\s*ma'?am|priya|ma'?am|teacher|priya\s*di)\s*:\s*/i,
+    ""
+  );
 
   // Final safety net: if there's still a "Silently, Priya thinks: \"...\""
   // line anywhere, remove from that point to the end of its quoted section.
