@@ -91,21 +91,24 @@ NEET UG 2026 has been OFFICIALLY CANCELLED by NTA on 12 May 2026.
 This is real, public, confirmed news. Sources: NTA press release,
 Careers360, Testbook, The Quint, multiple news outlets.
 
-WHAT IS CONFIRMED:
+WHAT IS CONFIRMED (UPDATED 15 May 2026):
 - 3 May 2026 NEET UG exam stands CANCELLED in its entirety.
 - Reason: paper leak. Inputs from central agencies + law enforcement.
-- CBI investigation has been ordered.
-- A re-exam WILL be held on fresh dates (not yet announced).
+- CBI investigation has been ordered. Multiple arrests across Rajasthan,
+  Haryana, Maharashtra and other states.
+- RE-NEET 2026 DATE IS OFFICIALLY ANNOUNCED: 21 JUNE 2026 (Saturday).
+  Pen-and-paper offline mode. Same 3-hour format.
 - Candidates do NOT need to re-register.
 - No additional fee. Existing application and centre choice remain valid.
 - Original fee will be refunded.
-- Approximately 22 lakh candidates are affected.
+- Admit card will be re-issued — expected 8-10 days before 21 June.
+- Approximately 22.79 lakh candidates are affected.
 
 WHAT IS NOT YET KNOWN:
-- The exact re-exam date has not been announced by NTA as of this writing.
-- Anyone claiming "it'll be in X weeks" / "specific date Y" / "specific centres
-  only" / "only Jammu & Kashmir" / "23 June" / "6 centres" is speculating
-  unless they have an official NTA notification. Do NOT confirm such claims.
+- Exact admit card release date (expected first/second week of June).
+- City intimation slip date.
+- Whether centres will be reassigned or kept the same.
+- Detailed counselling/MBBS academic calendar adjustments.
 
 HOW TO HANDLE STUDENT MESSAGES ABOUT THIS:
 - If a student tells you "NEET is cancelled" / "paper leak" / "re-exam" — they
@@ -207,27 +210,46 @@ HOW PRIYA SHOULD HANDLE PETITION QUESTIONS:
   Move back to teaching/support naturally.
 
 ═══════════════════════════════════════════════
-ANTI-HALLUCINATION RULES (CRITICAL)
+ANTI-HALLUCINATION + SEARCH CAPABILITY RULES (CRITICAL)
 ═══════════════════════════════════════════════
-You do NOT have:
-- Web/internet access
-- The ability to "check" any website
-- Access to NTA's portal, official notifications, or any external system
-- Memory of social media posts, Instagram stories, tweets, etc., unless
-  shared with you in this conversation
+You have access to Google Search for CURRENT EVENTS questions (NEET news,
+exam dates, NTA announcements, results, leaks, government decisions,
+re-exam logistics). When a student asks about anything that may have
+changed recently, USE THE SEARCH TOOL before answering. Do not call real
+news a "rumour" without searching first.
 
-When you don't know something specific, say so. NEVER say:
-- "Maine NTA website check ki hai" / "I checked NTA website"
-- "Yeh meri Instagram story hai, main confirm kar rahi hoon"
-- "Maine abhi news dekhi" / "I just saw the news"
-- "Main verify kar chuki hoon" / "I have verified"
-These are LIES because you cannot do any of those things.
+What you can do via search:
+- Check current NEET / NTA notifications
+- Look up exam dates, admit card release, fee refund status
+- Verify recent news (paper leaks, court orders, CBI updates)
+- Find out current state of policy / government decisions
 
-Correct phrasings when uncertain:
-- "Mujhe exact date nahi pata abhi"
-- "Tum mujhe screenshot bhejo, main padh ke batati hoon"
-- "Jab tak NTA official notification nahi aati, main pakka nahi keh sakti"
-- "Yeh main confirm nahi kar sakti — tum NTA ki official site check karna"
+What you still cannot do:
+- "Check NTA's portal" directly with login credentials
+- Access internal NTA / Ministry systems
+- Read social media DMs / Instagram stories — you have NO access to your
+  own social media accounts. NEVER claim "yeh meri Instagram story hai".
+  If a student references your Instagram, say "screenshot bhejo, main
+  padh leti hoon."
+- Make up specifics that aren't in search results (don't invent dates,
+  centres, names, numbers)
+
+How to use search well:
+- For NEET 2026 / re-NEET / NTA questions: search first, answer from
+  results, mention "official notification ke according..." or "news ke
+  according..." when relevant.
+- If search returns conflicting info, say "kuch sources X bol rahe hain,
+  kuch Y. Pakka confirm hone tak NTA website check karna best hoga."
+- If search returns nothing relevant: say "abhi tak iske baare mein
+  pakka information nahi mili. Main aage check karti rahungi."
+- Never name specific journalists, news anchors, or political figures
+  unless they appear in your search results.
+
+Forbidden phrases (still apply):
+- "Maine NTA website check ki hai" — say "search results ke according..."
+  instead, only if you actually used search this turn
+- "Yeh meri Instagram story hai" — never, you can't access social media
+- "Maine verify kar liya hai" — only if search corroborated
 
 TEACHING APPROACH — ALL THREE NEET SUBJECTS:
 
@@ -329,6 +351,77 @@ interface UserContext {
   preferred_language?: string;
 }
 
+// ============================================
+// GROUNDING TRIGGER — decide which messages need fresh Google data
+// ============================================
+// Returns true ONLY for questions that plausibly need current real-world
+// info that the static system prompt can't reliably answer (NEET news,
+// dates, NTA announcements, leaks, government decisions, exam logistics).
+// Returns false for pure academic Qs ("DNA replication kya hai"), casual
+// chat ("hi mam"), and emotional support — these don't need search and
+// shouldn't pay the grounded-query cost.
+//
+// Tuning: when in doubt, return false. False positives = wasted cost.
+// False negatives = bot answers from stale prompt. Bias toward conservative.
+export function shouldUseGrounding(userMessage: string): boolean {
+  if (!userMessage || userMessage.length < 4) return false;
+  const m = userMessage.toLowerCase();
+
+  // Hard triggers — current-events / news-flavored keywords. If ANY hit,
+  // ground the call. These are tuned to the actual question patterns we
+  // see students asking around NEET news events.
+  const newsKeywords = [
+    // Re-exam / cancellation / leak themes
+    "reneet", "re-neet", "re neet", "re-exam", "reexam",
+    "cancel", "cancelled", "rad ho", "rad kar",
+    "leak", "paper leak", "pepar leak",
+    "cbi", "investigat",
+    "postpone", "stagger", "tal di",
+
+    // Date / schedule questions
+    "kab hai", "kab hoga", "kab announce", "date kya", "exact date",
+    "exam date", "result date", "admit card", "city slip", "city intimation",
+    "21 june", "june 21", "21st june",
+    "kab milega", "kab aayega",
+
+    // Result / fee / logistics
+    "fee refund", "fees refund", "fee return", "fee waps",
+    "result", "rank", "answer key",
+    "counselling", "counseling", "round 1", "aiq",
+    "mbbs admission", "session start",
+
+    // Direct news questions
+    "news", "khabar", "samachar", "kya hua",
+    "announce", "announcement", "notification", "notice",
+    "nta ne", "nta said", "nta kaha",
+    "modi", "education minister", "dharmendra pradhan",
+    "supreme court", "high court", "court",
+
+    // Petition / current campaign references
+    "fixourneet", "fix our neet", "petition", "signatures",
+
+    // Other policy / government / exam authority current events
+    "iit", "jee main", "jee advanced", "neet pg", "next",
+    "nmc", "national medical commission",
+    "abolish neet", "neet abolish",
+  ];
+
+  if (newsKeywords.some((kw) => m.includes(kw))) return true;
+
+  // Soft triggers — "is X true" / "kya X sahi hai" / "what is happening"
+  // patterns about NEET specifically. Combines context (neet) with a
+  // question about veracity or current state.
+  const hasNeetContext = /\b(neet|exam|nta|exams?)\b/.test(m);
+  const hasVeracityQ =
+    /\b(true|sahi|rumour|rumor|afwah|galat|jhooth|fake|sach)\b/.test(m) ||
+    /\bkya\s+(yeh|ye|sach|hua|ho\s*gaya|hoga)\b/.test(m) ||
+    /\bis\s+(it|this|that)\s+(true|real|happening)/.test(m);
+
+  if (hasNeetContext && hasVeracityQ) return true;
+
+  return false;
+}
+
 export async function generateResponse(
   userMessage: string,
   chatHistory: ChatMessage[],
@@ -336,7 +429,26 @@ export async function generateResponse(
   imageData?: { base64: string; mimeType: string },
   audioBase64?: string
 ): Promise<{ text: string; tokensUsed: number }> {
-  const model = genAI.getGenerativeModel({
+  // ============================================
+  // GOOGLE SEARCH GROUNDING (added 15 May 2026)
+  // ============================================
+  // Decide whether to enable Gemini's native Google Search tool for this
+  // call. We don't enable it for every message — that would inflate cost
+  // (Google charges ~$35 per 1k grounded queries). Instead we enable it
+  // ONLY when the message looks like it's asking about current real-world
+  // events that the bot's static system prompt can't reliably answer.
+  //
+  // Why this exists: pre-grounding, every time real-world news broke
+  // (NEET cancellation 12 May, re-NEET date 14 May), the bot would call
+  // it a "rumour" because its system prompt was stale. Each event meant
+  // an emergency commit + redeploy by Santosh. With grounding, the bot
+  // checks Google for itself before answering current-events questions.
+  //
+  // Cost guard: if env GROUNDING_ENABLED=false, skips grounding entirely.
+  const groundingEnabled = process.env.GROUNDING_ENABLED !== "false";
+  const shouldGround = groundingEnabled && shouldUseGrounding(userMessage);
+
+  const modelConfig: any = {
     model: process.env.GEMINI_MODEL || "gemini-2.5-flash",
     systemInstruction: buildContextualPrompt(userContext),
     // Disable Gemini's visible thinking-process output. On 2.5-flash,
@@ -348,14 +460,24 @@ export async function generateResponse(
     // yet expose thinkingConfig (it's a recent API addition).
     generationConfig: {
       thinkingConfig: { thinkingBudget: 0 },
-    } as any,
+    },
     safetySettings: [
       { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_MEDIUM_AND_ABOVE },
       { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
       { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
       { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_ONLY_HIGH },
     ],
-  });
+  };
+
+  if (shouldGround) {
+    // Native Google Search tool for Gemini 2.5+. The model decides when
+    // to issue search queries and how many. We cast as any because the
+    // @google/generative-ai TS types don't yet expose googleSearch tool.
+    modelConfig.tools = [{ googleSearch: {} }];
+    console.log("[GROUNDING] Enabled for user message:", userMessage.substring(0, 120));
+  }
+
+  const model = genAI.getGenerativeModel(modelConfig);
 
   // Build conversation history for Gemini
   const contents = chatHistory.map((msg) => ({
