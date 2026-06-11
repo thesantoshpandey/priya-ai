@@ -620,9 +620,12 @@ export async function generateResponse(
           );
           continue;
         }
-        // All retries exhausted
+        // All retries exhausted — system is at quota / under upgrade.
+        // Honest, non-retry-inducing message so students don't spam-retry
+        // (which burns through any remaining quota faster). Also signals
+        // that this is planned/expected, not a transient blip.
         return {
-          text: "Arrey yaar, abhi thoda load hai 😅 Ek minute mein dubara message karo, main yahan hoon! 💪",
+          text: "Beta, abhi main v2.0 ke liye upgrade ho rahi hoon — backend pe kuch new features add ho rahe hain 🛠️\n\nThodi der mein wapas aaungi. Tab tak tum revision karte raho, panic mat karo. Main ja nahi rahi hoon, sirf updates lag rahe hain. 💜\n\n— Priya Ma'am",
           tokensUsed: 0,
         };
       }
@@ -646,15 +649,15 @@ export async function generateResponse(
       // Actual technical errors
       console.error("Gemini API error:", errMsg);
       return {
-        text: "Oops, kuch technical problem aa gayi. Ek minute mein try karna please 🙏",
+        text: "Beta, abhi main v2.0 ke liye upgrade ho rahi hoon — backend pe kuch new features add ho rahe hain 🛠️\n\nThodi der mein wapas aaungi. Tab tak tum revision karte raho, panic mat karo. Main ja nahi rahi hoon, sirf updates lag rahe hain. 💜\n\n— Priya Ma'am",
         tokensUsed: 0,
       };
     }
   }
 
-  // Fallback (should never reach here)
+  // Fallback (should never reach here, but mirror upgrade messaging)
   return {
-    text: "Ek minute ruko bachhe, main wapas aati hoon! 😊",
+    text: "Beta, abhi main v2.0 ke liye upgrade ho rahi hoon — backend pe kuch new features add ho rahe hain 🛠️\n\nThodi der mein wapas aaungi. Tab tak tum revision karte raho. 💜\n\n— Priya Ma'am",
     tokensUsed: 0,
   };
 }
