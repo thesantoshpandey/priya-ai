@@ -168,7 +168,26 @@ async function sendToUser(
   }
 }
 
+// ============================================
+// DAILY PUSH DISABLED — project wind-down (July 30, 2026)
+//
+// Cron schedule removed from vercel.json. This constant is a second,
+// independent guard so the push cannot fire even if the endpoint is
+// hit manually or a stale cron entry survives on Vercel.
+//
+// To re-enable: set PUSH_DISABLED = false AND restore the cron entry
+// in vercel.json. Both are required.
+// ============================================
+const PUSH_DISABLED = true;
+
 export async function GET(request: NextRequest) {
+  if (PUSH_DISABLED) {
+    return NextResponse.json(
+      { disabled: true, reason: "daily push disabled — project wind-down" },
+      { status: 503 }
+    );
+  }
+
   // Verify auth: Vercel cron sends Authorization: Bearer <CRON_SECRET>
   const authHeader = request.headers.get("authorization");
   const cronSecret = process.env.CRON_SECRET;
